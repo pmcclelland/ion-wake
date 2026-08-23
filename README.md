@@ -3,7 +3,8 @@
 **Ride the ion storm.**
 
 A top-down arcade shooter. Break the incoming fleet, chain combos, and grab
-multi-shot, shield, and speed. Three lives. Auto-fire is always on.
+multi-shot, shield, speed, and the rare nuke. Three lives. Auto-fire is always
+on.
 
 ![Ionwake title card](public/og.jpg)
 
@@ -30,6 +31,7 @@ A top-8 run earns a three-letter tag.
 | --- | --- | --- | --- |
 | Move | WASD or arrow keys | Drag / mouse follow | Left stick or D-pad |
 | Fire | Automatic | Automatic | Automatic |
+| Nuke | `X` | Bomb button | B / Circle |
 | Pause | `Esc` or `P` | Pause button | Start |
 | Fullscreen | `F` | Fullscreen button | — |
 
@@ -57,9 +59,10 @@ Kills in a 0.7s window raise a combo. Each extra kill multiplies the next by
 | **Shield** | Absorb one hit (stacks to 3) |
 | **Speed** | Movement boost (stacks to 2) |
 | **Life** | Extra ship |
+| **Nuke** | Screen-clear ion burst. Stock up to 2. Press `X`. Rare. |
 
-Bombers drop often, fighters sometimes, scouts rarely. A hit without a shield
-resets multi and speed.
+Bombers drop often, fighters sometimes, scouts rarely. Nukes are the scarce
+drop. A hit without a shield resets multi and speed; nukes stay with you.
 
 ## Stack
 
@@ -125,4 +128,5 @@ public/sprites/
   explode-1.png … explode-4.png
   muzzle-1.png … muzzle-4.png
   power-multi.png  power-shield.png  power-speed.png  power-life.png
+  power-nuke.png
 ```

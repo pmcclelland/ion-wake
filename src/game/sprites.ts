@@ -7,7 +7,7 @@ export type Atlas = {
   enemyBolt: HTMLImageElement | null;
   explode: HTMLImageElement[];
   muzzle: HTMLImageElement[];
-  power: Record<"multi" | "shield" | "speed" | "life", HTMLImageElement | null>;
+  power: Record<"multi" | "shield" | "speed" | "life" | "nuke", HTMLImageElement | null>;
   ready: boolean;
 };
 
@@ -41,6 +41,7 @@ export async function loadAtlas(): Promise<Atlas> {
     pShield,
     pSpeed,
     pLife,
+    pNuke,
   ] = await Promise.all([
     load("/sprites/player.png"),
     load("/sprites/scout.png"),
@@ -60,6 +61,7 @@ export async function loadAtlas(): Promise<Atlas> {
     load("/sprites/power-shield.png"),
     load("/sprites/power-speed.png"),
     load("/sprites/power-life.png"),
+    load("/sprites/power-nuke.png"),
   ]);
 
   return {
@@ -71,7 +73,7 @@ export async function loadAtlas(): Promise<Atlas> {
     enemyBolt,
     explode: [e1, e2, e3, e4].filter((x): x is HTMLImageElement => !!x),
     muzzle: [m1, m2, m3, m4].filter((x): x is HTMLImageElement => !!x),
-    power: { multi: pMulti, shield: pShield, speed: pSpeed, life: pLife },
+    power: { multi: pMulti, shield: pShield, speed: pSpeed, life: pLife, nuke: pNuke },
     ready: true,
   };
 }

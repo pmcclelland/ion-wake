@@ -75,10 +75,53 @@ def process_grid(
         print(f"wrote {dest_dir / name}.png")
 
 
+def flood_magenta(arr: np.ndarray) -> np.ndarray:
+    """Key JPEG-mottled magenta by flooding from the frame edge."""
+    from collections import deque
+
+    h, w = arr.shape[:2]
+    r = arr[:, :, 0].astype(np.float32)
+    g = arr[:, :, 1].astype(np.float32)
+    b = arr[:, :, 2].astype(np.float32)
+    dist = np.sqrt((r - 255.0) ** 2 + g**2 + (b - 255.0) ** 2)
+    mag = np.minimum(r, b) - g
+    is_bg = (dist < 150) | ((mag > 30) & (g < 150) & (r > 110) & (b > 110))
+    visited = np.zeros((h, w), dtype=bool)
+    q = deque()
+    for x in range(w):
+        q.append((0, x))
+        q.append((h - 1, x))
+    for y in range(h):
+        q.append((y, 0))
+        q.append((y, w - 1))
+    while q:
+        y, x = q.popleft()
+        if y < 0 or y >= h or x < 0 or x >= w or visited[y, x] or not is_bg[y, x]:
+            continue
+        visited[y, x] = True
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+            q.append((y + dy, x + dx))
+    out = arr.copy()
+    out[visited, 3] = 0
+    out[visited, 0] = 0
+    out[visited, 1] = 0
+    out[visited, 2] = 0
+    return out
+
+
+def process_flood_single(src: Path, dest: Path, size: int) -> None:
+    im = Image.open(src).convert("RGBA")
+    arr = flood_magenta(np.array(im))
+    arr = crop_content(arr)
+    fit_square(arr, size).save(dest)
+    print(f"wrote {dest} {size}x{size}")
+
+
 def main() -> None:
-    pub = Path("/workspace/public/sprites")
+    root = Path(__file__).resolve().parents[2]
+    pub = root / "public" / "sprites"
     pub.mkdir(parents=True, exist_ok=True)
-    raw = Path("/workspace/assets/sprites")
+    raw = root / "assets" / "sprites"
 
     process_single(raw / "player/raw-sheet.png", pub / "player.png", 160)
     process_single(raw / "scout/raw-sheet.png", pub / "scout.png", 112)
@@ -111,6 +154,9 @@ def main() -> None:
         80,
         ["power-multi", "power-shield", "power-speed", "power-life"],
     )
+    nuke_src = raw / "power-nuke" / "raw.jpg"
+    if nuke_src.exists():
+        process_flood_single(nuke_src, pub / "power-nuke.png", 80)
 
 
 if __name__ == "__main__":

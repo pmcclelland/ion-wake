@@ -1,7 +1,7 @@
 export type Mode = "title" | "playing" | "paused" | "over" | "scores";
 
 export type EnemyKind = "scout" | "fighter" | "bomber";
-export type PowerKind = "multi" | "shield" | "speed" | "life";
+export type PowerKind = "multi" | "shield" | "speed" | "life" | "nuke";
 export type Pattern = "sine" | "dive" | "hold" | "seek" | "form";
 
 export type ScoreRow = {
@@ -19,6 +19,7 @@ export type HudState = {
   shield: number;
   multi: number;
   speed: number;
+  nukes: number;
   combo: number;
   banner: string | null;
   overScore: number;
@@ -36,6 +37,7 @@ export const defaultHud = (): HudState => ({
   shield: 0,
   multi: 1,
   speed: 0,
+  nukes: 0,
   combo: 0,
   banner: null,
   overScore: 0,
@@ -57,4 +59,5 @@ export type GameAPI = {
   setMuted: (muted: boolean) => void;
   submitName: (name: string) => void;
   unlockAudio: () => void;
+  fireNuke: () => void;
 };

@@ -6,6 +6,8 @@ import { defaultHud, type EnemyKind, type HudState, type Mode, type Pattern, typ
 
 const STEP = 1 / 60;
 const TOUCH_LIFT = 72;
+const NUKE_MAX = 2;
+const NUKE_DMG = 8;
 
 type Bullet = {
   alive: boolean;
@@ -47,6 +49,7 @@ type Particle = {
   color: string;
 };
 type Burst = { alive: boolean; x: number; y: number; t: number; max: number; scale: number };
+type Shock = { alive: boolean; x: number; y: number; t: number; max: number };
 type Floater = { alive: boolean; x: number; y: number; text: string; t: number };
 type Star = { x: number; y: number; z: number; s: number };
 
@@ -104,6 +107,8 @@ export class Game {
     multi: 1,
     shield: 0,
     speed: 0,
+    nukes: 0,
+    nukeCd: 0,
     dead: false,
     respawn: 0,
     tilt: 0,
@@ -124,7 +129,10 @@ export class Game {
   private pickups: Pickup[] = [];
   private particles: Particle[] = [];
   private bursts: Burst[] = [];
+  private shocks: Shock[] = [];
   private muzzles: Burst[] = [];
+  private flash = 0;
+  private wantNuke = false;
   private floaters: Floater[] = [];
   private stars: Star[] = [];
   private nebula: Array<{ x: number; y: number; r: number; c: string; v: number }> = [];
@@ -183,8 +191,10 @@ export class Game {
         let steps = 0;
         while (this.acc >= STEP && steps < 6) {
           if (this.mode === "playing") {
-            if (this.hitstop > 0) this.hitstop -= STEP;
-            else this.step(STEP, actions);
+            if (this.hitstop > 0) {
+              this.hitstop -= STEP;
+              this.player.nukeCd = Math.max(0, this.player.nukeCd - STEP);
+            } else this.step(STEP, actions);
           }
           this.acc -= STEP;
           this.time += STEP;
@@ -266,6 +276,11 @@ export class Game {
     this.pushHud();
   }
 
+  fireNuke(): void {
+    this.wantNuke = true;
+    if (this.tryNuke()) this.wantNuke = false;
+  }
+
   submitName(name: string): void {
     this.commitPending(name);
     this.mode = "scores";
@@ -341,6 +356,10 @@ export class Game {
     this.player.multi = 1;
     this.player.shield = 0;
     this.player.speed = 0;
+    this.player.nukes = 0;
+    this.player.nukeCd = 0;
+    this.flash = 0;
+    this.wantNuke = false;
     this.pushHud();
   }
 
@@ -366,6 +385,7 @@ export class Game {
     this.player.invuln = center ? 0 : 2;
     this.player.respawn = 0;
     this.player.fireCd = 0;
+    this.player.nukeCd = 0;
     this.player.tilt = 0;
   }
 
@@ -376,6 +396,7 @@ export class Game {
       this.pickups,
       this.particles,
       this.bursts,
+      this.shocks,
       this.muzzles,
       this.floaters,
     ]) {
@@ -385,6 +406,7 @@ export class Game {
 
   private step(dt: number, a: Actions): void {
     this.trauma = Math.max(0, this.trauma - dt * 1.6);
+    this.flash = Math.max(0, this.flash - dt * 2.6);
     this.comboT -= dt;
     if (this.comboT <= 0) this.combo = 0;
     if (this.bannerT > 0) {
@@ -407,6 +429,7 @@ export class Game {
 
   private updatePlayer(dt: number, a: Actions): void {
     if (this.player.dead) {
+      this.wantNuke = false;
       this.player.respawn -= dt;
       if (this.player.respawn <= 0) {
         if (this.player.lives <= 0) {
@@ -419,6 +442,10 @@ export class Game {
     }
     this.player.invuln = Math.max(0, this.player.invuln - dt);
     this.player.fireCd = Math.max(0, this.player.fireCd - dt);
+    this.player.nukeCd = Math.max(0, this.player.nukeCd - dt);
+    if (a.nukePressed) this.wantNuke = true;
+    if (this.wantNuke && this.tryNuke()) this.wantNuke = false;
+    if (this.player.nukes <= 0) this.wantNuke = false;
 
     const usingPointer = a.pointerActive && a.pointerX != null && a.pointerY != null;
     const usingKeys = Math.abs(a.moveX) + Math.abs(a.moveY) > 0.05;
@@ -739,6 +766,11 @@ export class Game {
       m.t += dt;
       if (m.t >= m.max) m.alive = false;
     }
+    for (const s of this.shocks) {
+      if (!s.alive) continue;
+      s.t += dt;
+      if (s.t >= s.max) s.alive = false;
+    }
     for (const f of this.floaters) {
       if (!f.alive) continue;
       f.y -= 36 * dt;
@@ -784,10 +816,10 @@ export class Game {
     }
   }
 
-  private hurtEnemy(e: Enemy, ram = false): void {
-    e.hp -= ram ? 4 : 1;
+  private hurtEnemy(e: Enemy, ram = false, opts?: { dmg?: number; drop?: boolean; sfx?: boolean }): void {
+    e.hp -= opts?.dmg ?? (ram ? 4 : 1);
     e.flash = 0.08;
-    this.audio.hit();
+    if (opts?.sfx !== false) this.audio.hit();
     this.spawnParticle(e.x, e.y, rand(-80, 80), rand(-80, 40), 0.3, 2, "#e8eaef");
     if (e.hp <= 0) {
       e.alive = false;
@@ -797,9 +829,9 @@ export class Game {
       this.combo += 1;
       this.comboT = 0.7;
       this.spawnFloater(e.x, e.y, `+${pts}`);
-      this.explode(e.x, e.y, e.kind === "bomber" ? 1.4 : 1);
-      if (e.kind === "bomber" && !this.reduced) this.hitstop = 0.06;
-      this.maybeDrop(e);
+      this.explode(e.x, e.y, e.kind === "bomber" ? 1.4 : 1, opts?.sfx !== false);
+      if (e.kind === "bomber" && !this.reduced) this.hitstop = Math.max(this.hitstop, 0.06);
+      if (opts?.drop !== false) this.maybeDrop(e);
       if (this.score >= this.nextLifeAt) {
         this.player.lives += 1;
         this.nextLifeAt += 15000;
@@ -835,7 +867,7 @@ export class Game {
     if (Math.random() > chance) return;
     const roll = Math.random();
     const kind: PowerKind =
-      roll < 0.34 ? "multi" : roll < 0.62 ? "shield" : roll < 0.88 ? "speed" : "life";
+      roll < 0.32 ? "multi" : roll < 0.58 ? "shield" : roll < 0.82 ? "speed" : roll < 0.93 ? "life" : "nuke";
     const p = this.take(this.pickups, () => ({ alive: true, kind, x: 0, y: 0, t: 0 }));
     p.alive = true;
     p.kind = kind;
@@ -850,6 +882,7 @@ export class Game {
     if (kind === "multi") this.player.multi = this.player.multi >= 3 ? 5 : 3;
     else if (kind === "shield") this.player.shield = Math.min(3, this.player.shield + 1);
     else if (kind === "speed") this.player.speed = Math.min(2, this.player.speed + 1);
+    else if (kind === "nuke") this.player.nukes = Math.min(NUKE_MAX, this.player.nukes + 1);
     else {
       this.player.lives += 1;
       this.audio.extraLife();
@@ -857,7 +890,7 @@ export class Game {
     this.score += 50;
   }
 
-  private explode(x: number, y: number, scale = 1): void {
+  private explode(x: number, y: number, scale = 1, sfx = true): void {
     const b = this.take(this.bursts, () => ({ alive: true, x, y, t: 0, max: 0.4, scale: 1 }));
     b.alive = true;
     b.x = x;
@@ -865,7 +898,7 @@ export class Game {
     b.t = 0;
     b.max = 0.42;
     b.scale = scale;
-    this.audio.explode();
+    if (sfx) this.audio.explode();
     this.trauma = Math.min(1, this.trauma + 0.28 * scale);
     for (let i = 0; i < 14 * scale; i++) {
       const ang = Math.random() * Math.PI * 2;
@@ -879,6 +912,78 @@ export class Game {
         rand(1.5, 3.5),
         "rgba(180,220,235,0.9)",
       );
+    }
+  }
+
+  private tryNuke(): boolean {
+    if (this.mode !== "playing") return false;
+    if (this.player.dead || this.player.nukes <= 0 || this.player.nukeCd > 0) return false;
+    this.player.nukes -= 1;
+    this.player.nukeCd = 0.42;
+    this.audio.nuke();
+    this.trauma = 1;
+    this.flash = this.reduced ? 0.28 : 0.85;
+    if (!this.reduced) this.hitstop = Math.max(this.hitstop, 0.14);
+    this.rumble(320, 1, 0.75);
+
+    const ox = this.player.x;
+    const oy = this.player.y;
+    this.spawnShock(ox, oy, 0.42);
+    this.spawnShock(ox, oy, 0.62);
+    this.spawnShock(ox, oy, 0.88);
+
+    const n = this.reduced ? 22 : 96;
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const s = rand(70, 560);
+      const col =
+        i % 3 === 0 ? "rgba(232,234,239,0.95)" : i % 3 === 1 ? "rgba(110,200,224,0.92)" : "rgba(180,230,245,0.88)";
+      this.spawnParticle(ox, oy, Math.cos(ang) * s, Math.sin(ang) * s, rand(0.45, 0.95), rand(2, 5.8), col);
+    }
+    const ring = this.reduced ? 10 : 28;
+    for (let i = 0; i < ring; i++) {
+      const ang = (i / ring) * Math.PI * 2;
+      this.spawnParticle(ox, oy, Math.cos(ang) * 260, Math.sin(ang) * 260, 0.5, 3.4, "rgba(255,255,255,0.92)");
+    }
+
+    for (const b of this.bullets) {
+      if (b.alive && b.from === "enemy") b.alive = false;
+    }
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      if (e.x < -28 || e.x > this.w + 28 || e.y < -28 || e.y > this.h + 28) continue;
+      this.hurtEnemy(e, false, { dmg: NUKE_DMG, drop: false, sfx: false });
+    }
+    this.pushHud();
+    return true;
+  }
+
+  private spawnShock(x: number, y: number, max: number): void {
+    const s = this.take(this.shocks, () => ({ alive: true, x, y, t: 0, max }));
+    s.alive = true;
+    s.x = x;
+    s.y = y;
+    s.t = 0;
+    s.max = max;
+  }
+
+  private rumble(ms: number, strong: number, weak: number): void {
+    try {
+      const list = navigator.getGamepads?.();
+      if (!list) return;
+      for (const pad of list) {
+        if (!pad) continue;
+        const act = pad.vibrationActuator;
+        if (!act?.playEffect) continue;
+        void act.playEffect("dual-rumble", {
+          startDelay: 0,
+          duration: ms,
+          strongMagnitude: strong,
+          weakMagnitude: weak,
+        });
+      }
+    } catch {
+      /* no haptics */
     }
   }
 
@@ -939,7 +1044,7 @@ export class Game {
   ): void {
     let live = 0;
     for (const p of this.particles) if (p.alive) live++;
-    if (live > 280) return;
+    if (live > 420) return;
     const p = this.take(this.particles, () => ({
       alive: true,
       x,
@@ -1002,6 +1107,7 @@ export class Game {
     if (!this.player.dead && (this.mode === "playing" || this.mode === "paused")) this.drawPlayer();
     for (const m of this.muzzles) if (m.alive) this.drawMuzzle(m);
     for (const b of this.bursts) if (b.alive) this.drawBurst(b);
+    for (const s of this.shocks) if (s.alive) this.drawShock(s);
     for (const p of this.particles) if (p.alive) this.drawParticle(p);
     for (const f of this.floaters) if (f.alive) this.drawFloater(f);
 
@@ -1020,6 +1126,11 @@ export class Game {
     }
 
     ctx.restore();
+
+    if (this.flash > 0) {
+      ctx.fillStyle = `rgba(210,236,245,${Math.min(1, this.flash) * 0.52})`;
+      ctx.fillRect(0, 0, w, h);
+    }
   }
 
   private drawStars(speed: number, dt: number): void {
@@ -1150,7 +1261,8 @@ export class Game {
       const ctx = this.ctx;
       ctx.save();
       ctx.translate(p.x, p.y + bob);
-      ctx.fillStyle = p.kind === "shield" ? "#6ec8e0" : p.kind === "speed" ? "#7d9e86" : "#e8eaef";
+      ctx.fillStyle =
+        p.kind === "nuke" ? "#9fe4f2" : p.kind === "shield" ? "#6ec8e0" : p.kind === "speed" ? "#7d9e86" : "#e8eaef";
       ctx.beginPath();
       ctx.arc(0, 0, 10, 0, Math.PI * 2);
       ctx.fill();
@@ -1190,6 +1302,26 @@ export class Game {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(b.x, b.y, 12 * b.scale + (b.t / b.max) * 28 * b.scale, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawShock(s: Shock): void {
+    const k = s.max > 0 ? s.t / s.max : 1;
+    const reach = Math.hypot(this.w, this.h) * 0.78;
+    const r = Math.max(8, k * reach);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = `rgba(180,230,245,${(1 - k) * 0.82})`;
+    ctx.lineWidth = 7 * (1 - k) + 1.2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(232,234,239,${(1 - k) * 0.45})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 0.72, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -1273,6 +1405,7 @@ export class Game {
       this.player.shield,
       this.player.multi,
       this.player.speed,
+      this.player.nukes,
       this.combo,
       this.bannerT > 0 ? this.banner : "",
       this.save.muted,
@@ -1292,6 +1425,7 @@ export class Game {
       shield: this.player.shield,
       multi: this.player.multi,
       speed: this.player.speed,
+      nukes: this.player.nukes,
       combo: this.combo,
       banner: this.bannerT > 0 ? this.banner : null,
       overScore: this.hud.overScore,
@@ -1316,6 +1450,15 @@ export class Game {
       getVy: () => this.player.vy,
       getSpeed: () => Math.hypot(this.player.vx, this.player.vy),
       setKeys: (codes: string[]) => this.input.setKeys(codes),
+      giveNukes: (n = NUKE_MAX) => {
+        this.player.nukes = Math.max(0, Math.min(NUKE_MAX, n | 0));
+        this.pushHud();
+      },
+      getNukes: () => this.player.nukes,
+      fireNuke: () => this.tryNuke(),
+      countEnemies: () => this.enemies.reduce((n, e) => n + (e.alive ? 1 : 0), 0),
+      countEnemyBullets: () =>
+        this.bullets.reduce((n, b) => n + (b.alive && b.from === "enemy" ? 1 : 0), 0),
       forceHighScore: (score = 9999) => {
         this.score = score;
         this.wave = Math.max(this.wave, 1);
@@ -1336,6 +1479,11 @@ declare global {
       getVy: () => number;
       getSpeed: () => number;
       setKeys: (codes: string[]) => void;
+      giveNukes?: (n?: number) => void;
+      getNukes?: () => number;
+      fireNuke?: () => void;
+      countEnemies?: () => number;
+      countEnemyBullets?: () => number;
       forceHighScore: (score?: number) => void;
     };
   }

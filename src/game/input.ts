@@ -10,6 +10,7 @@ const GAME_CODES = new Set([
   "Space",
   "KeyP",
   "KeyF",
+  "KeyX",
   "Escape",
   "Enter",
 ]);
@@ -31,6 +32,7 @@ export type Actions = {
   moveX: number;
   moveY: number;
   fire: boolean;
+  nukePressed: boolean;
   pause: boolean;
   pausePressed: boolean;
   pointerX: number | null;
@@ -72,6 +74,8 @@ function pollGamepads(): Gamepad[] {
 export class Input {
   private keys = new Set<string>();
   private prevPause = false;
+  private prevNuke = false;
+  private nukeQueued = false;
   pointerX: number | null = null;
   pointerY: number | null = null;
   pointerActive = false;
@@ -83,7 +87,12 @@ export class Input {
     this.canvas = canvas;
     const onDown = (e: KeyboardEvent) => {
       if (isTyping(e)) return;
+      if (e.repeat) {
+        if (GAME_CODES.has(e.code)) e.preventDefault();
+        return;
+      }
       this.keys.add(e.code);
+      if (e.code === "KeyX") this.nukeQueued = true;
       if (GAME_CODES.has(e.code)) e.preventDefault();
     };
     const onUp = (e: KeyboardEvent) => {
@@ -191,11 +200,16 @@ export class Input {
     this.prevPause = pauseHeld;
 
     const fire = this.keys.has("Space") || pads.some((p) => p.buttons[0]?.pressed || p.buttons[7]?.pressed);
+    const nukeHeld = this.keys.has("KeyX") || pads.some((p) => p.buttons[1]?.pressed);
+    const nukePressed = this.nukeQueued || (nukeHeld && !this.prevNuke);
+    this.nukeQueued = false;
+    this.prevNuke = nukeHeld;
 
     return {
       moveX,
       moveY,
       fire,
+      nukePressed,
       pause: pauseHeld,
       pausePressed,
       pointerX: this.pointerX,

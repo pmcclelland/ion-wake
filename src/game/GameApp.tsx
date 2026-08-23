@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Bomb,
   ChevronsUp,
   Maximize2,
   Minimize2,
@@ -134,6 +135,12 @@ export function GameApp() {
                   {hud.speed}
                 </span>
               )}
+              {hud.nukes > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-xs uppercase tracking-wider">
+                  <Bomb className="size-3.5" strokeWidth={2} />
+                  {hud.nukes}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 flex-col gap-2">
@@ -158,6 +165,26 @@ export function GameApp() {
         </div>
       )}
 
+      {playing && (
+        <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10">
+          <Button
+            variant="secondary"
+            size="icon"
+            className="pointer-events-auto relative size-12"
+            aria-label="Fire nuke"
+            disabled={hud.nukes <= 0}
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => g()?.fireNuke()}
+          >
+            <Bomb className="size-5" strokeWidth={2} />
+            <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-fg font-display text-xs font-semibold leading-none tabular-nums text-accent-fg">
+              {hud.nukes}
+            </span>
+          </Button>
+        </div>
+      )}
+
       {playing && hud.banner && (
         <div className="pointer-events-none absolute inset-x-0 top-1/4 z-10 text-center">
           <p className="font-display text-3xl font-semibold tracking-widest text-fg">{hud.banner}</p>
@@ -173,8 +200,8 @@ export function GameApp() {
             IONWAKE
           </h1>
           <p className="max-w-sm text-pretty text-sm leading-relaxed text-muted">
-            Break the incoming fleet. Grab multi-shot, shield, and speed. Three lives. Auto-fire is
-            always on.
+            Break the incoming fleet. Grab multi-shot, shield, speed, and the rare nuke. Three lives.
+            Auto-fire is always on.
           </p>
           <div className="mt-2 flex w-full max-w-xs flex-col gap-2">
             <Button size="lg" className="w-full" type="button" onClick={() => g()?.play()}>
@@ -209,6 +236,8 @@ export function GameApp() {
             <dd>WASD, arrows, or drag</dd>
             <dt className="font-medium text-fg">Fire</dt>
             <dd>Automatic</dd>
+            <dt className="font-medium text-fg">Nuke</dt>
+            <dd>X, or the bomb</dd>
             <dt className="font-medium text-fg">Pause</dt>
             <dd>Esc or P</dd>
             {canFullscreen && (

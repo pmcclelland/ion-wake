@@ -153,4 +153,12 @@ export class AudioBus {
     this.tone(659, 0.1, "sine", 0.06);
     this.tone(784, 0.14, "sine", 0.07);
   }
+
+  nuke(): void {
+    this.noise(0.55, 420, 0.28);
+    this.noise(0.22, 1800, 0.12);
+    this.tone(90, 0.55, "sawtooth", 0.12, 0.22);
+    this.tone(180, 0.28, "triangle", 0.07, 0.35);
+    this.tone(520, 0.12, "sine", 0.05, 2.2);
+  }
 }
