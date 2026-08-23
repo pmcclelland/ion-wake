@@ -8,6 +8,8 @@ const STEP = 1 / 60;
 const TOUCH_LIFT = 72;
 const NUKE_MAX = 2;
 const NUKE_DMG = 8;
+const SPEED_MAX = 2;
+const SHIELD_MAX = 3;
 
 type Bullet = {
   alive: boolean;
@@ -465,7 +467,7 @@ export class Game {
     } else if (usingPointer && a.pointerX != null && a.pointerY != null) {
       const tx = a.pointerX;
       const ty = a.pointerIsTouch ? a.pointerY - TOUCH_LIFT : a.pointerY;
-      const k = 16;
+      const k = 16 * this.speedMul();
       const nx = this.player.x + (tx - this.player.x) * (1 - Math.exp(-k * dt));
       const ny = this.player.y + (ty - this.player.y) * (1 - Math.exp(-k * dt));
       this.player.vx = (nx - this.player.x) / Math.max(dt, 0.0001);
@@ -810,8 +812,9 @@ export class Game {
     for (const p of this.pickups) {
       if (!p.alive || this.player.dead) continue;
       if (Math.hypot(p.x - this.player.x, p.y - this.player.y) < 22) {
+        const kind = p.kind;
         p.alive = false;
-        this.collect(p.kind);
+        this.collect(kind);
       }
     }
   }
@@ -880,14 +883,24 @@ export class Game {
     this.audio.pickup();
     this.spawnFloater(this.player.x, this.player.y - 24, kind.toUpperCase());
     if (kind === "multi") this.player.multi = this.player.multi >= 3 ? 5 : 3;
-    else if (kind === "shield") this.player.shield = Math.min(3, this.player.shield + 1);
-    else if (kind === "speed") this.player.speed = Math.min(2, this.player.speed + 1);
+    else if (kind === "shield") this.player.shield = Math.min(SHIELD_MAX, this.player.shield + 1);
+    else if (kind === "speed") this.player.speed = Math.min(SPEED_MAX, this.player.speed + 1);
     else if (kind === "nuke") this.player.nukes = Math.min(NUKE_MAX, this.player.nukes + 1);
     else {
       this.player.lives += 1;
       this.audio.extraLife();
     }
+    this.clampStacks();
     this.score += 50;
+  }
+
+  private clampStacks(): void {
+    this.player.speed = Math.min(SPEED_MAX, Math.max(0, this.player.speed | 0));
+    this.player.shield = Math.min(SHIELD_MAX, Math.max(0, this.player.shield | 0));
+    this.player.nukes = Math.min(NUKE_MAX, Math.max(0, this.player.nukes | 0));
+    if (this.player.multi >= 5) this.player.multi = 5;
+    else if (this.player.multi >= 3) this.player.multi = 3;
+    else this.player.multi = 1;
   }
 
   private explode(x: number, y: number, scale = 1, sfx = true): void {
@@ -1397,6 +1410,7 @@ export class Game {
   }
 
   private pushHud(): void {
+    this.clampStacks();
     const key = [
       this.mode,
       this.score,
@@ -1454,6 +1468,11 @@ export class Game {
         this.player.nukes = Math.max(0, Math.min(NUKE_MAX, n | 0));
         this.pushHud();
       },
+      collectPower: (kind: "multi" | "shield" | "speed" | "life" | "nuke") => {
+        this.collect(kind);
+        this.pushHud();
+      },
+      getSpeedStacks: () => this.player.speed,
       getNukes: () => this.player.nukes,
       fireNuke: () => this.tryNuke(),
       countEnemies: () => this.enemies.reduce((n, e) => n + (e.alive ? 1 : 0), 0),
@@ -1481,6 +1500,8 @@ declare global {
       setKeys: (codes: string[]) => void;
       giveNukes?: (n?: number) => void;
       getNukes?: () => number;
+      collectPower?: (kind: "multi" | "shield" | "speed" | "life" | "nuke") => void;
+      getSpeedStacks?: () => number;
       fireNuke?: () => void;
       countEnemies?: () => number;
       countEnemyBullets?: () => number;

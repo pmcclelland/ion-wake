@@ -62,7 +62,7 @@ export function GameApp() {
     const root = rootRef.current;
     if (!root) return;
     void toggleFullscreen(root).catch(() => {
-      /* iOS / denied */
+      /* gesture denied */
     });
   }, []);
 
@@ -88,7 +88,7 @@ export function GameApp() {
   return (
     <div
       ref={rootRef}
-      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "h-full" : "h-dvh"}`}
+      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "ion-wake-fs-root h-full" : "h-dvh"}`}
     >
       <canvas
         ref={canvasRef}
