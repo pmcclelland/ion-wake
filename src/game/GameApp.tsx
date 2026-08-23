@@ -166,19 +166,19 @@ export function GameApp() {
       )}
 
       {playing && (
-        <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10">
+        <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-10 sm:bottom-[max(1.25rem,env(safe-area-inset-bottom))] sm:right-5">
           <Button
             variant="secondary"
             size="icon"
-            className="pointer-events-auto relative size-12"
+            className="pointer-events-auto relative size-20 sm:size-12"
             aria-label="Fire nuke"
             disabled={hud.nukes <= 0}
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => g()?.fireNuke()}
           >
-            <Bomb className="size-5" strokeWidth={2} />
-            <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-fg font-display text-xs font-semibold leading-none tabular-nums text-accent-fg">
+            <Bomb className="size-8 sm:size-5" strokeWidth={2} />
+            <span className="absolute -right-1 -top-1 flex size-6 items-center justify-center rounded-full bg-fg font-display text-xs font-semibold leading-none tabular-nums text-accent-fg sm:size-5">
               {hud.nukes}
             </span>
           </Button>
