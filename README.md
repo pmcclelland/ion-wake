@@ -31,6 +31,7 @@ A top-8 run earns a three-letter tag.
 | Move | WASD or arrow keys | Drag / mouse follow | Left stick or D-pad |
 | Fire | Automatic | Automatic | Automatic |
 | Pause | `Esc` or `P` | Pause button | Start |
+| Fullscreen | `F` | Fullscreen button | — |
 
 Sound mute lives on the pause menu. Touch drag lifts the ship above your finger
 so you can still see it.

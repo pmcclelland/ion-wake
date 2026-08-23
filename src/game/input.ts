@@ -9,6 +9,7 @@ const GAME_CODES = new Set([
   "ArrowRight",
   "Space",
   "KeyP",
+  "KeyF",
   "Escape",
   "Enter",
 ]);

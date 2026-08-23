@@ -1,13 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronsUp, Pause, Shield, Volume2, VolumeX, Zap } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ChevronsUp,
+  Maximize2,
+  Minimize2,
+  Pause,
+  Shield,
+  Volume2,
+  VolumeX,
+  Zap,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  FULLSCREEN_EVENTS,
+  fullscreenSupported,
+  isFullscreen,
+  toggleFullscreen,
+} from "./fullscreen";
 import { defaultHud, type GameAPI, type HudState } from "./types";
 
 export function GameApp() {
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameAPI | null>(null);
   const [hud, setHud] = useState<HudState>(defaultHud);
   const [name, setName] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [canFullscreen, setCanFullscreen] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -27,13 +45,50 @@ export function GameApp() {
     };
   }, []);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    setCanFullscreen(fullscreenSupported(root));
+    const sync = () => setFullscreen(isFullscreen());
+    sync();
+    for (const ev of FULLSCREEN_EVENTS) document.addEventListener(ev, sync);
+    return () => {
+      for (const ev of FULLSCREEN_EVENTS) document.removeEventListener(ev, sync);
+    };
+  }, []);
+
+  const onToggleFullscreen = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    void toggleFullscreen(root).catch(() => {
+      /* iOS / denied */
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyF" || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t instanceof HTMLElement && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+        return;
+      }
+      e.preventDefault();
+      onToggleFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onToggleFullscreen]);
+
   const g = () => gameRef.current;
   const playing = hud.mode === "playing";
   const paused = hud.mode === "paused";
   const showHud = playing || paused;
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-bg text-fg select-none">
+    <div
+      ref={rootRef}
+      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "h-full" : "h-dvh"}`}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full touch-none"
@@ -81,16 +136,25 @@ export function GameApp() {
               )}
             </div>
           </div>
-          <Button
-            variant="secondary"
-            size="icon"
-            className="pointer-events-auto size-11 shrink-0"
-            aria-label="Pause"
-            type="button"
-            onClick={() => g()?.pause()}
-          >
-            <Pause className="size-4" strokeWidth={2} />
-          </Button>
+          <div className="flex shrink-0 flex-col gap-2">
+            <Button
+              variant="secondary"
+              size="icon"
+              className="pointer-events-auto size-11"
+              aria-label="Pause"
+              type="button"
+              onClick={() => g()?.pause()}
+            >
+              <Pause className="size-4" strokeWidth={2} />
+            </Button>
+            {canFullscreen && (
+              <FullscreenButton
+                active={fullscreen}
+                className="pointer-events-auto"
+                onToggle={onToggleFullscreen}
+              />
+            )}
+          </div>
         </div>
       )}
 
@@ -124,6 +188,21 @@ export function GameApp() {
             >
               High scores
             </Button>
+            {canFullscreen && (
+              <Button
+                variant="outline"
+                className="w-full"
+                type="button"
+                onClick={onToggleFullscreen}
+              >
+                {fullscreen ? (
+                  <Minimize2 className="size-4" strokeWidth={2} />
+                ) : (
+                  <Maximize2 className="size-4" strokeWidth={2} />
+                )}
+                {fullscreen ? "Exit fullscreen" : "Fullscreen"}
+              </Button>
+            )}
           </div>
           <dl className="mt-4 grid w-full max-w-sm grid-cols-2 gap-x-6 gap-y-2 text-left text-xs text-muted">
             <dt className="font-medium text-fg">Move</dt>
@@ -132,6 +211,12 @@ export function GameApp() {
             <dd>Automatic</dd>
             <dt className="font-medium text-fg">Pause</dt>
             <dd>Esc or P</dd>
+            {canFullscreen && (
+              <>
+                <dt className="font-medium text-fg">Fullscreen</dt>
+                <dd>F</dd>
+              </>
+            )}
           </dl>
         </Panel>
       )}
@@ -156,6 +241,16 @@ export function GameApp() {
               )}
               {hud.muted ? "Sound off" : "Sound on"}
             </Button>
+            {canFullscreen && (
+              <Button variant="outline" className="w-full" type="button" onClick={onToggleFullscreen}>
+                {fullscreen ? (
+                  <Minimize2 className="size-4" strokeWidth={2} />
+                ) : (
+                  <Maximize2 className="size-4" strokeWidth={2} />
+                )}
+                {fullscreen ? "Exit fullscreen" : "Fullscreen"}
+              </Button>
+            )}
             <Button variant="outline" className="w-full" type="button" onClick={() => g()?.restart()}>
               Restart
             </Button>
@@ -264,6 +359,34 @@ export function GameApp() {
         </Panel>
       )}
     </div>
+  );
+}
+
+function FullscreenButton({
+  active,
+  onToggle,
+  className,
+}: {
+  active: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="icon"
+      className={className}
+      aria-label={active ? "Exit fullscreen" : "Enter fullscreen"}
+      aria-pressed={active}
+      type="button"
+      onClick={onToggle}
+    >
+      {active ? (
+        <Minimize2 className="size-4" strokeWidth={2} />
+      ) : (
+        <Maximize2 className="size-4" strokeWidth={2} />
+      )}
+    </Button>
   );
 }
 
