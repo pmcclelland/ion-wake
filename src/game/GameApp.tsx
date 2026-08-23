@@ -213,7 +213,7 @@ export function GameApp() {
               type="button"
               onClick={() => g()?.showScores()}
             >
-              High scores
+              High Scores
             </Button>
             {canFullscreen && (
               <Button
@@ -295,7 +295,7 @@ export function GameApp() {
           <p className="font-display text-xs font-medium uppercase tracking-widest text-muted">
             Run ended
           </p>
-          <h2 className="font-display text-2xl font-semibold tracking-widest">Ionwake</h2>
+          <h2 className="font-display text-2xl font-semibold tracking-widest">IONWAKE</h2>
           <p className="font-display text-4xl font-semibold tabular-nums tracking-tight">
             {hud.overScore.toLocaleString()}
           </p>
@@ -328,7 +328,7 @@ export function GameApp() {
                 className="h-12 select-text rounded-lg border border-border-strong bg-surface px-3 text-center font-display text-xl tracking-widest text-fg outline-none placeholder:text-subtle focus-visible:ring-2 focus-visible:ring-accent/70"
               />
               <Button type="submit" size="lg" className="w-full">
-                Save score
+                Save Score
               </Button>
             </form>
           )}
@@ -344,7 +344,7 @@ export function GameApp() {
               type="button"
               onClick={() => (hud.isHigh ? g()?.submitName(name) : g()?.showScores())}
             >
-              High scores
+              High Scores
             </Button>
             {!hud.isHigh && (
               <Button variant="ghost" className="w-full" type="button" onClick={() => g()?.toTitle()}>
@@ -357,7 +357,7 @@ export function GameApp() {
 
       {hud.mode === "scores" && (
         <Panel>
-          <h2 className="font-display text-2xl font-semibold tracking-widest">High scores</h2>
+          <h2 className="font-display text-2xl font-semibold tracking-widest">High Scores</h2>
           {hud.scores.length === 0 ? (
             <p className="text-sm text-muted">No scores yet. Fly a run.</p>
           ) : (
