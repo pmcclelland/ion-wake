@@ -153,6 +153,7 @@ export class Game {
       this.audio.setMuted(this.save.muted);
       this.pushHud();
     });
+    void this.syncRemoteScores();
     this.wireControlsTest();
     window.addEventListener("resize", this.onResize);
     document.addEventListener("visibilitychange", this.onVis);
@@ -275,13 +276,46 @@ export class Game {
     if (!this.pendingHigh) return;
     const pending = this.pendingHigh;
     this.pendingHigh = null;
-    this.save.scores = insertScore(this.save.scores, {
+    const row = {
       name: formatTag(name),
       score: pending.score,
       wave: pending.wave,
       at: Date.now(),
-    });
+    };
+    this.save.scores = insertScore(this.save.scores, row);
     persistSave(this.save);
+    void this.pushRemoteScore(row);
+  }
+
+  private async syncRemoteScores(): Promise<void> {
+    try {
+      const { listScores } = await import("@/lib/scores");
+      const remote = await listScores();
+      if (!Array.isArray(remote) || remote.length === 0) return;
+      this.save.scores = mergeScores(this.save.scores, remote);
+      persistSave(this.save);
+      this.pushHud();
+    } catch {
+      /* local board still works */
+    }
+  }
+
+  private async pushRemoteScore(row: {
+    name: string;
+    score: number;
+    wave: number;
+    at: number;
+  }): Promise<void> {
+    try {
+      const { submitScore } = await import("@/lib/scores");
+      const remote = await submitScore({ data: row });
+      if (!Array.isArray(remote)) return;
+      this.save.scores = mergeScores(this.save.scores, remote);
+      persistSave(this.save);
+      this.pushHud();
+    } catch {
+      /* kept locally */
+    }
   }
 
   private refreshScores(): void {

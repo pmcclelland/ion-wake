@@ -21,8 +21,8 @@ to stay alive, pick up drops, and ride the combo as waves escalate.
 - **Bombers** hold the line every fifth wave and drop loot often
 - Enemy HP ticks up every four waves
 
-High scores stay on this device (local storage + IndexedDB). A top-8 run earns
-a three-letter tag.
+High scores are a shared top-8 board (saved on the server) plus a local cache.
+A top-8 run earns a three-letter tag.
 
 ## Controls
 
@@ -65,7 +65,7 @@ resets multi and speed.
 - [React 19](https://react.dev/) + [TanStack Start](https://tanstack.com/start) / Router
 - [Vite](https://vite.dev/) + [Tailwind CSS v4](https://tailwindcss.com/)
 - Canvas 2D game loop in `src/game/` (fixed 60 Hz step, Web Audio SFX)
-- No accounts or server save — scores persist in the browser
+- No accounts — the public high-score board lives in Postgres (Neon on deploy, local PGLite in dev)
 
 ## Layout
 
