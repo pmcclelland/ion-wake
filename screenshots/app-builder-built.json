@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Ionwake",
+      "hasCanvas": true,
+      "bodyTextLen": 187,
+      "bodyTextHash": "0002fcde5fdea9a41c6fe4435ef71ce3d3e7a4cb590921b7055851248b178ceb",
+      "bodyTextPrefix": "ARCADE IONWAKE Break the incoming fleet. Grab multi-shot, shield",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Ionwake",
+      "hasCanvas": true,
+      "bodyTextLen": 187,
+      "bodyTextHash": "0002fcde5fdea9a41c6fe4435ef71ce3d3e7a4cb590921b7055851248b178ceb",
+      "bodyTextPrefix": "ARCADE IONWAKE Break the incoming fleet. Grab multi-shot, shield",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}
