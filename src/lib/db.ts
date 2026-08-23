@@ -5,10 +5,16 @@ export type DbSource = "neon" | "pglite";
 
 // An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
 // "unset" — otherwise production would silently run on the PGLite fallback.
-const rawDatabaseUrl =
-  typeof process !== "undefined" ? process.env.DATABASE_URL : undefined;
-const databaseUrl =
-  rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
+// Neon-on-Vercel may inject POSTGRES_URL / DATABASE_URL_UNPOOLED instead.
+function readDatabaseUrl(): string | undefined {
+  if (typeof process === "undefined") return undefined;
+  for (const key of ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL", "DATABASE_URL_UNPOOLED"] as const) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+const databaseUrl = readDatabaseUrl();
 
 /**
  * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
