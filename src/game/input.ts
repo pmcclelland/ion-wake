@@ -99,15 +99,15 @@ export class Input {
       this.keys.delete(e.code);
     };
     const clear = () => this.keys.clear();
-    window.addEventListener("keydown", onDown);
-    window.addEventListener("keyup", onUp);
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keyup", onUp, true);
     window.addEventListener("blur", clear);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) clear();
     });
     this.unsubs.push(
-      () => window.removeEventListener("keydown", onDown),
-      () => window.removeEventListener("keyup", onUp),
+      () => window.removeEventListener("keydown", onDown, true),
+      () => window.removeEventListener("keyup", onUp, true),
       () => window.removeEventListener("blur", clear),
     );
 

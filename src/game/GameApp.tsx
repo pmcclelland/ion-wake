@@ -58,13 +58,27 @@ export function GameApp() {
     };
   }, []);
 
+  const focusPlayfield = useCallback(() => {
+    rootRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const onToggleFullscreen = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
-    void toggleFullscreen(root).catch(() => {
-      /* gesture denied */
-    });
+    void toggleFullscreen(root)
+      .catch(() => {
+        /* gesture denied */
+      })
+      .finally(() => {
+        root.focus({ preventScroll: true });
+      });
   }, []);
+
+  useEffect(() => {
+    if (hud.mode === "playing" || hud.mode === "paused") {
+      focusPlayfield();
+    }
+  }, [hud.mode, focusPlayfield]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -88,7 +102,16 @@ export function GameApp() {
   return (
     <div
       ref={rootRef}
-      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "ion-wake-fs-root" : "h-dvh"}`}
+      tabIndex={-1}
+      className={`relative w-full overflow-hidden bg-bg text-fg select-none outline-none ${fullscreen ? "ion-wake-fs-root" : "h-dvh"}`}
+      onPointerUp={(e) => {
+        if (hud.mode !== "playing" && hud.mode !== "paused") return;
+        const t = e.target;
+        if (t instanceof HTMLElement && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+          return;
+        }
+        focusPlayfield();
+      }}
     >
       <canvas
         ref={canvasRef}
