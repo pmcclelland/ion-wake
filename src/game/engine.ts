@@ -166,6 +166,8 @@ export class Game {
     void this.syncRemoteScores();
     this.wireControlsTest();
     window.addEventListener("resize", this.onResize);
+    document.addEventListener("fullscreenchange", this.onResize);
+    document.addEventListener("webkitfullscreenchange", this.onResize);
     document.addEventListener("visibilitychange", this.onVis);
     window.addEventListener("pagehide", this.onHide);
     window.visualViewport?.addEventListener("resize", this.onResize);
@@ -222,6 +224,8 @@ export class Game {
     this.ro = null;
     window.removeEventListener("resize", this.onResize);
     window.visualViewport?.removeEventListener("resize", this.onResize);
+    document.removeEventListener("fullscreenchange", this.onResize);
+    document.removeEventListener("webkitfullscreenchange", this.onResize);
     document.removeEventListener("visibilitychange", this.onVis);
     window.removeEventListener("pagehide", this.onHide);
     if (window.__controlsTest) delete window.__controlsTest;

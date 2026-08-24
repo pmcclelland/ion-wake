@@ -1,6 +1,6 @@
 type FullscreenEl = HTMLElement & {
-  webkitRequestFullscreen?: () => Promise<void> | void;
-  webkitRequestFullScreen?: () => Promise<void> | void;
+  webkitRequestFullscreen?: (opts?: unknown) => Promise<void> | void;
+  webkitRequestFullScreen?: (opts?: unknown) => Promise<void> | void;
 };
 
 type FullscreenDoc = Document & {
@@ -31,17 +31,23 @@ export function isFullscreen(): boolean {
   return !!getFullscreenElement() || immersive;
 }
 
+/** iPhone reports the method but fullscreenEnabled is false and calls reject. */
 function nativeAvailable(): boolean {
   const d = doc();
-  if (d.fullscreenEnabled === false && d.webkitFullscreenEnabled === false) return false;
-  if (d.fullscreenEnabled || d.webkitFullscreenEnabled) return true;
+  if (d.fullscreenEnabled === true || d.webkitFullscreenEnabled === true) return true;
+  if (d.fullscreenEnabled === false) return false;
   const el = document.documentElement as FullscreenEl;
   return typeof el.requestFullscreen === "function" || typeof el.webkitRequestFullscreen === "function";
 }
 
-/** Always true: iPhone has no element Fullscreen API, but immersive fill still works. */
+/** Always true: phones without the API still get an immersive fill. */
 export function fullscreenSupported(_el?: HTMLElement): boolean {
   return true;
+}
+
+function kickLayout(): void {
+  window.dispatchEvent(new Event("resize"));
+  window.visualViewport?.dispatchEvent(new Event("resize"));
 }
 
 function layoutImmersive(el: HTMLElement): void {
@@ -74,6 +80,7 @@ function bindViewport(el: HTMLElement): void {
 
 function notify(): void {
   document.dispatchEvent(new Event(IMMERSIVE_CHANGE));
+  kickLayout();
 }
 
 function setImmersive(on: boolean, el: HTMLElement): void {
@@ -95,36 +102,42 @@ function setImmersive(on: boolean, el: HTMLElement): void {
   notify();
 }
 
-async function requestNative(el: HTMLElement): Promise<boolean> {
+function fullscreenTarget(): FullscreenEl {
+  return document.documentElement as FullscreenEl;
+}
+
+async function requestNative(): Promise<boolean> {
   if (!nativeAvailable()) return false;
-  const node = el as FullscreenEl;
-  const root = document.documentElement as FullscreenEl;
-  const targets = [node, root];
-  for (const target of targets) {
+  const target = fullscreenTarget();
+  const attempts: Array<() => Promise<void> | void> = [];
+  if (typeof target.requestFullscreen === "function") {
+    attempts.push(() => target.requestFullscreen({ navigationUI: "hide" }));
+    attempts.push(() => target.requestFullscreen());
+  }
+  const webkitFs = target.webkitRequestFullscreen?.bind(target);
+  const webkitFsAlt = target.webkitRequestFullScreen?.bind(target);
+  if (webkitFs) attempts.push(() => webkitFs());
+  if (webkitFsAlt) attempts.push(() => webkitFsAlt());
+
+  for (const run of attempts) {
     try {
-      if (typeof target.requestFullscreen === "function") {
-        await target.requestFullscreen({ navigationUI: "hide" });
-        if (getFullscreenElement()) return true;
-      }
-    } catch {
-      /* try webkit / next target */
-    }
-    try {
-      await target.webkitRequestFullscreen?.();
-      if (getFullscreenElement()) return true;
-      await target.webkitRequestFullScreen?.();
+      await run();
       if (getFullscreenElement()) return true;
     } catch {
-      /* next */
+      /* next attempt — still in the same user-gesture turn if the throw was sync */
     }
+    if (getFullscreenElement()) return true;
   }
   return !!getFullscreenElement();
 }
 
 export async function enterFullscreen(el: HTMLElement): Promise<void> {
   if (isFullscreen()) return;
-  const ok = await requestNative(el);
-  if (ok) return;
+  const ok = await requestNative();
+  if (ok) {
+    notify();
+    return;
+  }
   setImmersive(true, el);
 }
 

@@ -88,7 +88,7 @@ export function GameApp() {
   return (
     <div
       ref={rootRef}
-      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "ion-wake-fs-root h-full" : "h-dvh"}`}
+      className={`relative w-full overflow-hidden bg-bg text-fg select-none ${fullscreen ? "ion-wake-fs-root" : "h-dvh"}`}
     >
       <canvas
         ref={canvasRef}
