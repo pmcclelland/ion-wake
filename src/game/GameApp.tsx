@@ -83,7 +83,7 @@ export function GameApp() {
   const g = () => gameRef.current;
   const playing = hud.mode === "playing";
   const paused = hud.mode === "paused";
-  const showHud = playing || paused;
+  const showHud = playing;
 
   return (
     <div
@@ -421,17 +421,22 @@ function ControlsHint({
   className?: string;
 }) {
   return (
-    <dl
-      aria-label="Controls"
-      className={`grid w-full max-w-sm grid-cols-2 gap-x-6 gap-y-2 text-left text-xs text-muted ${className ?? ""}`}
-    >
-      {CONTROL_ROWS.filter((row) => !row.fullscreenOnly || canFullscreen).map((row) => (
-        <Fragment key={row.action}>
-          <dt className="font-medium text-fg">{row.action}</dt>
-          <dd>{row.binding}</dd>
-        </Fragment>
-      ))}
-    </dl>
+    <div className={`w-full max-w-sm border-t border-border pt-4 text-left ${className ?? ""}`}>
+      <p
+        id="controls-hint-label"
+        className="font-display text-xs font-medium uppercase tracking-widest text-muted"
+      >
+        Controls
+      </p>
+      <dl aria-labelledby="controls-hint-label" className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+        {CONTROL_ROWS.filter((row) => !row.fullscreenOnly || canFullscreen).map((row) => (
+          <Fragment key={row.action}>
+            <dt className="font-medium text-accent">{row.action}</dt>
+            <dd className="text-fg">{row.binding}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
   );
 }
 
