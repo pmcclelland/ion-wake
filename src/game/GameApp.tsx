@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Bomb,
   ChevronsUp,
@@ -231,28 +231,14 @@ export function GameApp() {
               </Button>
             )}
           </div>
-          <dl className="mt-4 grid w-full max-w-sm grid-cols-2 gap-x-6 gap-y-2 text-left text-xs text-muted">
-            <dt className="font-medium text-fg">Move</dt>
-            <dd>WASD, arrows, or drag</dd>
-            <dt className="font-medium text-fg">Fire</dt>
-            <dd>Automatic</dd>
-            <dt className="font-medium text-fg">Nuke</dt>
-            <dd>X, or the bomb</dd>
-            <dt className="font-medium text-fg">Pause</dt>
-            <dd>Esc or P</dd>
-            {canFullscreen && (
-              <>
-                <dt className="font-medium text-fg">Fullscreen</dt>
-                <dd>F</dd>
-              </>
-            )}
-          </dl>
+          <ControlsHint canFullscreen={canFullscreen} className="mt-4" />
         </Panel>
       )}
 
       {paused && (
         <Panel>
           <h2 className="font-display text-2xl font-semibold tracking-widest">Paused</h2>
+          <ControlsHint canFullscreen={canFullscreen} />
           <div className="mt-2 flex w-full max-w-xs flex-col gap-2">
             <Button size="lg" className="w-full" type="button" onClick={() => g()?.resume()}>
               Resume
@@ -419,10 +405,40 @@ function FullscreenButton({
   );
 }
 
+const CONTROL_ROWS: ReadonlyArray<{ action: string; binding: string; fullscreenOnly?: boolean }> = [
+  { action: "Move", binding: "WASD, arrows, or drag" },
+  { action: "Fire", binding: "Automatic" },
+  { action: "Nuke", binding: "X, or the bomb" },
+  { action: "Pause / Resume", binding: "Esc or P" },
+  { action: "Fullscreen", binding: "F", fullscreenOnly: true },
+];
+
+function ControlsHint({
+  canFullscreen,
+  className,
+}: {
+  canFullscreen: boolean;
+  className?: string;
+}) {
+  return (
+    <dl
+      aria-label="Controls"
+      className={`grid w-full max-w-sm grid-cols-2 gap-x-6 gap-y-2 text-left text-xs text-muted ${className ?? ""}`}
+    >
+      {CONTROL_ROWS.filter((row) => !row.fullscreenOnly || canFullscreen).map((row) => (
+        <Fragment key={row.action}>
+          <dt className="font-medium text-fg">{row.action}</dt>
+          <dd>{row.binding}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
 function Panel({ children }: { children: ReactNode }) {
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/60 px-5 py-10">
-      <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl border border-border bg-surface/95 px-6 py-8 text-center">
+    <div className="absolute inset-0 z-20 flex items-center justify-center overflow-y-auto bg-bg/60 px-5 py-[max(2.5rem,env(safe-area-inset-top))]">
+      <div className="my-auto flex w-full max-w-md flex-col items-center gap-4 rounded-xl border border-border bg-surface/95 px-6 py-8 text-center">
         {children}
       </div>
     </div>
