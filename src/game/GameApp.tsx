@@ -428,11 +428,11 @@ function ControlsHint({
       >
         Controls
       </p>
-      <dl aria-labelledby="controls-hint-label" className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-accent">
+      <dl aria-labelledby="controls-hint-label" className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
         {CONTROL_ROWS.filter((row) => !row.fullscreenOnly || canFullscreen).map((row) => (
           <Fragment key={row.action}>
-            <dt className="font-medium text-fg">{row.action}</dt>
-            <dd>{row.binding}</dd>
+            <dt className="font-medium text-accent">{row.action}</dt>
+            <dd className="text-fg">{row.binding}</dd>
           </Fragment>
         ))}
       </dl>
