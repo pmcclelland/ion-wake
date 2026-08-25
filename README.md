@@ -17,6 +17,11 @@ on.
 Open the title screen and hit **Play**. The ship fires on its own — your job is
 to stay alive, pick up drops, and ride the combo as waves escalate.
 
+**Play together** opens a private 2-player room. Share the link (`/?r=K7Q2`).
+Same waves and score, shared lives, your own guns and nukes. Co-op runs do not
+write the public high-score board. If a direct connection fails, the lobby says
+so instead of spinning.
+
 - **Scouts** dart in sine and dive patterns
 - **Fighters** seek and return fire
 - **Bombers** hold the line every fifth wave and drop loot often

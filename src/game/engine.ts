@@ -1,4 +1,18 @@
+import { P2PRoom, type PeerInfo } from "@/lib/multiplayer";
 import { AudioBus } from "./audio";
+import {
+  WORLD_H,
+  WORLD_W,
+  asNetMsg,
+  makeRoomCode,
+  p2pRoomId,
+  parseRoomCode,
+  type InpMsg,
+  type NetRole,
+  type PeerPhase,
+  type ShipSnap,
+  type SnapMsg,
+} from "./coop";
 import { Input, type Actions } from "./input";
 import { formatTag, hydrateSave, insertScore, isHighScore, loadSave, mergeScores, persistSave, type SaveState } from "./save";
 import { drawSprite, loadAtlas, type Atlas } from "./sprites";
@@ -10,6 +24,8 @@ const NUKE_MAX = 2;
 const NUKE_DMG = 8;
 const SPEED_MAX = 2;
 const SHIELD_MAX = 3;
+const NET_HZ = 0.05;
+const CONNECT_MS = 14000;
 
 type Bullet = {
   alive: boolean;
@@ -54,6 +70,47 @@ type Burst = { alive: boolean; x: number; y: number; t: number; max: number; sca
 type Shock = { alive: boolean; x: number; y: number; t: number; max: number };
 type Floater = { alive: boolean; x: number; y: number; text: string; t: number };
 type Star = { x: number; y: number; z: number; s: number };
+type Ship = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  lives: number;
+  invuln: number;
+  fireCd: number;
+  multi: number;
+  shield: number;
+  speed: number;
+  nukes: number;
+  nukeCd: number;
+  dead: boolean;
+  respawn: number;
+  tilt: number;
+  wantNuke: boolean;
+};
+
+function blankShip(): Ship {
+  return {
+    x: WORLD_W / 2,
+    y: WORLD_H * 0.78,
+    vx: 0,
+    vy: 0,
+    r: 14,
+    lives: 3,
+    invuln: 0,
+    fireCd: 0,
+    multi: 1,
+    shield: 0,
+    speed: 0,
+    nukes: 0,
+    nukeCd: 0,
+    dead: false,
+    respawn: 0,
+    tilt: 0,
+    wantNuke: false,
+  };
+}
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -82,8 +139,13 @@ export class Game {
   private running = false;
   private acc = 0;
   private last = 0;
-  private w = 390;
-  private h = 844;
+  private w = WORLD_W;
+  private h = WORLD_H;
+  private viewW = 390;
+  private viewH = 844;
+  private ox = 0;
+  private oy = 0;
+  private scale = 1;
   private dpr = 1;
   private reduced = false;
   private hudKey = "";
@@ -97,24 +159,19 @@ export class Game {
   private trauma = 0;
   private time = 0;
 
-  private player = {
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    r: 14,
-    lives: 3,
-    invuln: 0,
-    fireCd: 0,
-    multi: 1,
-    shield: 0,
-    speed: 0,
-    nukes: 0,
-    nukeCd: 0,
-    dead: false,
-    respawn: 0,
-    tilt: 0,
-  };
+  private player: Ship = blankShip();
+  private mate: Ship | null = null;
+  private netRole: NetRole = "solo";
+  private p2p: P2PRoom | null = null;
+  private selfId = "";
+  private roomCode: string | null = null;
+  private peerPhase: PeerPhase = "idle";
+  private peerReady = false;
+  private connectUntil = 0;
+  private lastNet = 0;
+  private mateIn: InpMsg | null = null;
+  private pendingBoom: { x: number; y: number } | null = null;
+  private onRoomCode: ((code: string | null) => void) | null = null;
   private score = 0;
   private wave = 1;
   private combo = 0;
@@ -134,18 +191,22 @@ export class Game {
   private shocks: Shock[] = [];
   private muzzles: Burst[] = [];
   private flash = 0;
-  private wantNuke = false;
   private floaters: Floater[] = [];
   private stars: Star[] = [];
   private nebula: Array<{ x: number; y: number; r: number; c: string; v: number }> = [];
   private ro: ResizeObserver | null = null;
 
-  constructor(canvas: HTMLCanvasElement, onHud: (h: HudState) => void) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    onHud: (h: HudState) => void,
+    opts?: { joinCode?: string | null; onRoomCode?: (code: string | null) => void },
+  ) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas unsupported");
     this.ctx = ctx;
     this.onHud = onHud;
+    this.onRoomCode = opts?.onRoomCode ?? null;
     this.input = new Input(canvas);
     this.save = loadSave();
     this.reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -165,6 +226,8 @@ export class Game {
     });
     void this.syncRemoteScores();
     this.wireControlsTest();
+    const join = parseRoomCode(opts?.joinCode);
+    if (join) queueMicrotask(() => this.joinAsGuest(join));
     window.addEventListener("resize", this.onResize);
     document.addEventListener("fullscreenchange", this.onResize);
     document.addEventListener("webkitfullscreenchange", this.onResize);
@@ -190,6 +253,7 @@ export class Game {
         dt = Math.min(dt, 0.1);
         this.acc += dt;
         const actions = this.input.poll();
+        this.pumpNet(now);
         if (this.mode === "playing" && actions.pausePressed) this.pause();
         else if (this.mode === "paused" && actions.pausePressed) this.resume();
         let steps = 0;
@@ -198,7 +262,10 @@ export class Game {
             if (this.hitstop > 0) {
               this.hitstop -= STEP;
               this.player.nukeCd = Math.max(0, this.player.nukeCd - STEP);
+              if (this.mate) this.mate.nukeCd = Math.max(0, this.mate.nukeCd - STEP);
             } else this.step(STEP, actions);
+          } else if (this.mode === "lobby") {
+            this.watchLobby(now);
           }
           this.acc -= STEP;
           this.time += STEP;
@@ -219,6 +286,7 @@ export class Game {
     cancelAnimationFrame(this.raf);
     this.commitPending();
     persistSave(this.save);
+    this.closeNet();
     this.input.destroy();
     this.ro?.disconnect();
     this.ro = null;
@@ -239,12 +307,39 @@ export class Game {
     this.audio.unlock();
     this.audio.ui();
     this.commitPending();
+    this.closeNet();
+    this.netRole = "solo";
     this.beginRun();
+  }
+
+  playTogether(): void {
+    this.audio.unlock();
+    this.audio.ui();
+    this.commitPending();
+    const code = makeRoomCode();
+    this.openNet("host", code);
+  }
+
+  startCoop(): void {
+    if (this.netRole !== "host" || !this.peerReady) return;
+    this.audio.unlock();
+    this.audio.ui();
+    this.p2p?.send({ t: "go" });
+    this.beginRun();
+  }
+
+  leaveCoop(): void {
+    this.audio.ui();
+    this.closeNet();
+    this.mode = "title";
+    this.banner = "";
+    this.pushHud();
   }
 
   pause(): void {
     if (this.mode !== "playing") return;
     this.mode = "paused";
+    if (this.netRole !== "solo") this.p2p?.send({ t: "p", on: 1 });
     this.pushHud();
   }
 
@@ -252,17 +347,24 @@ export class Game {
     if (this.mode !== "paused") return;
     this.audio.unlock();
     this.mode = "playing";
+    if (this.netRole !== "solo") this.p2p?.send({ t: "p", on: 0 });
     this.pushHud();
   }
 
   restart(): void {
     this.audio.unlock();
     this.commitPending();
+    if (this.netRole === "guest") {
+      this.p2p?.send({ t: "go" });
+      return;
+    }
+    if (this.netRole === "host") this.p2p?.send({ t: "go" });
     this.beginRun();
   }
 
   toTitle(): void {
     this.commitPending();
+    this.closeNet();
     this.mode = "title";
     this.banner = "";
     this.pushHud();
@@ -283,8 +385,12 @@ export class Game {
   }
 
   fireNuke(): void {
-    this.wantNuke = true;
-    if (this.tryNuke()) this.wantNuke = false;
+    this.player.wantNuke = true;
+    if (this.netRole === "guest") {
+      this.p2p?.send({ t: "i", x: this.player.x, y: this.player.y, n: 1 });
+      return;
+    }
+    if (this.tryNukeFrom(this.player)) this.player.wantNuke = false;
   }
 
   submitName(name: string): void {
@@ -357,15 +463,14 @@ export class Game {
     this.spawnQ = [];
     this.waveT = 0;
     this.clearWorld();
-    this.resetPlayer(true);
+    const coop = this.netRole !== "solo";
+    if (coop && !this.mate) this.mate = blankShip();
+    if (!coop) this.mate = null;
+    const localLane = this.netRole === "guest" ? 1 : this.netRole === "host" ? -1 : 0;
+    this.resetShip(this.player, true, localLane);
     this.player.lives = 3;
-    this.player.multi = 1;
-    this.player.shield = 0;
-    this.player.speed = 0;
-    this.player.nukes = 0;
-    this.player.nukeCd = 0;
+    if (this.mate) this.resetShip(this.mate, true, -localLane);
     this.flash = 0;
-    this.wantNuke = false;
     this.pushHud();
   }
 
@@ -373,26 +478,41 @@ export class Game {
     this.mode = "over";
     this.hud.overScore = this.score;
     this.hud.overWave = this.wave;
-    this.hud.isHigh = isHighScore(this.save.scores, this.score);
+    const coop = this.netRole !== "solo";
+    this.hud.isHigh = !coop && isHighScore(this.save.scores, this.score);
     if (this.hud.isHigh) {
       this.pendingHigh = { score: this.score, wave: Math.max(1, this.wave) };
     } else {
       this.pendingHigh = null;
     }
+    if (this.netRole === "host") this.p2p?.send({ t: "x", sc: this.score, wv: this.wave });
     this.pushHud();
   }
 
   private resetPlayer(center: boolean): void {
-    this.player.x = this.w / 2;
-    this.player.y = this.h * (center ? 0.78 : 0.82);
-    this.player.vx = 0;
-    this.player.vy = 0;
-    this.player.dead = false;
-    this.player.invuln = center ? 0 : 2;
-    this.player.respawn = 0;
-    this.player.fireCd = 0;
-    this.player.nukeCd = 0;
-    this.player.tilt = 0;
+    this.resetShip(
+      this.player,
+      center,
+      this.mate ? (this.netRole === "guest" ? 1 : -1) : 0,
+    );
+  }
+
+  private resetShip(s: Ship, center: boolean, lane: number): void {
+    s.x = this.w / 2 + lane * 52;
+    s.y = this.h * (center ? 0.78 : 0.82);
+    s.vx = 0;
+    s.vy = 0;
+    s.dead = false;
+    s.invuln = center ? 0 : 2;
+    s.respawn = 0;
+    s.fireCd = 0;
+    s.nukeCd = 0;
+    s.tilt = 0;
+    s.multi = 1;
+    s.shield = 0;
+    s.speed = 0;
+    s.nukes = 0;
+    s.wantNuke = false;
   }
 
   private clearWorld(): void {
@@ -420,45 +540,57 @@ export class Game {
       if (this.bannerT <= 0) this.banner = "";
     }
     this.updatePlayer(dt, a);
-    this.updateWave(dt);
-    this.updateEnemies(dt);
-    this.updateBullets(dt);
-    this.updatePickups(dt);
+    if (this.netRole !== "guest") {
+      this.updateMate(dt);
+      this.updateWave(dt);
+      this.updateEnemies(dt);
+      this.updateBullets(dt);
+      this.updatePickups(dt);
+      this.collide();
+    } else {
+      this.updateBullets(dt);
+      this.updatePickups(dt);
+    }
     this.updateFx(dt);
-    this.collide();
     this.pushHud();
   }
 
-  private speedMul(): number {
-    return 1 + this.player.speed * 0.28;
+  private speedMul(s: Ship = this.player): number {
+    return 1 + s.speed * 0.28;
   }
 
   private updatePlayer(dt: number, a: Actions): void {
-    if (this.player.dead) {
-      this.wantNuke = false;
-      this.player.respawn -= dt;
-      if (this.player.respawn <= 0) {
+    const s = this.player;
+    if (s.dead) {
+      s.wantNuke = false;
+      s.respawn -= dt;
+      if (s.respawn <= 0) {
         if (this.player.lives <= 0) {
-          this.gameOver();
+          if (this.netRole !== "guest") this.gameOver();
           return;
         }
         this.resetPlayer(false);
       }
       return;
     }
-    this.player.invuln = Math.max(0, this.player.invuln - dt);
-    this.player.fireCd = Math.max(0, this.player.fireCd - dt);
-    this.player.nukeCd = Math.max(0, this.player.nukeCd - dt);
-    if (a.nukePressed) this.wantNuke = true;
-    if (this.wantNuke && this.tryNuke()) this.wantNuke = false;
-    if (this.player.nukes <= 0) this.wantNuke = false;
+    s.invuln = Math.max(0, s.invuln - dt);
+    s.fireCd = Math.max(0, s.fireCd - dt);
+    s.nukeCd = Math.max(0, s.nukeCd - dt);
+    if (a.nukePressed) s.wantNuke = true;
+    if (s.wantNuke) {
+      if (this.netRole === "guest") {
+        this.p2p?.send({ t: "i", x: s.x, y: s.y, n: 1 });
+        s.wantNuke = false;
+      } else if (this.tryNukeFrom(s)) s.wantNuke = false;
+    }
+    if (s.nukes <= 0) s.wantNuke = false;
 
     const usingPointer = a.pointerActive && a.pointerX != null && a.pointerY != null;
     const usingKeys = Math.abs(a.moveX) + Math.abs(a.moveY) > 0.05;
 
     if (usingKeys) {
-      const accel = 2200 * this.speedMul();
-      const max = 310 * this.speedMul();
+      const accel = 2200 * this.speedMul(s);
+      const max = 310 * this.speedMul(s);
       this.player.vx += a.moveX * accel * dt;
       this.player.vy += a.moveY * accel * dt;
       const sp = Math.hypot(this.player.vx, this.player.vy);
@@ -469,9 +601,10 @@ export class Game {
       this.player.x += this.player.vx * dt;
       this.player.y += this.player.vy * dt;
     } else if (usingPointer && a.pointerX != null && a.pointerY != null) {
-      const tx = a.pointerX;
-      const ty = a.pointerIsTouch ? a.pointerY - TOUCH_LIFT : a.pointerY;
-      const k = 16 * this.speedMul();
+      const wpt = this.toWorld(a.pointerX, a.pointerY);
+      const tx = wpt.x;
+      const ty = a.pointerIsTouch ? wpt.y - TOUCH_LIFT : wpt.y;
+      const k = 16 * this.speedMul(s);
       const nx = this.player.x + (tx - this.player.x) * (1 - Math.exp(-k * dt));
       const ny = this.player.y + (ty - this.player.y) * (1 - Math.exp(-k * dt));
       this.player.vx = (nx - this.player.x) / Math.max(dt, 0.0001);
@@ -492,7 +625,7 @@ export class Game {
     this.player.tilt += (this.player.vx * 0.00115 - this.player.tilt) * (1 - Math.exp(-12 * dt));
 
     if (this.player.fireCd <= 0) {
-      this.firePlayer();
+      if (this.netRole !== "guest") this.fireFrom(this.player);
       this.player.fireCd = this.player.multi >= 5 ? 0.09 : 0.12;
     }
 
@@ -509,18 +642,14 @@ export class Game {
     }
   }
 
-  private firePlayer(): void {
+  private fireFrom(s: Ship): void {
     const angles =
-      this.player.multi >= 5
-        ? [-0.32, -0.16, 0, 0.16, 0.32]
-        : this.player.multi >= 3
-          ? [-0.18, 0, 0.18]
-          : [0];
+      s.multi >= 5 ? [-0.32, -0.16, 0, 0.16, 0.32] : s.multi >= 3 ? [-0.18, 0, 0.18] : [0];
     const speed = 640;
     for (const ang of angles) {
       this.spawnBullet(
-        this.player.x + Math.sin(ang) * 8,
-        this.player.y - 20,
+        s.x + Math.sin(ang) * 8,
+        s.y - 20,
         Math.sin(ang) * speed,
         -Math.cos(ang) * speed,
         "player",
@@ -528,7 +657,7 @@ export class Game {
         1.4,
       );
     }
-    this.spawnMuzzle(this.player.x, this.player.y - 22);
+    this.spawnMuzzle(s.x, s.y - 22);
     this.audio.shoot();
     if (!this.reduced) this.trauma = Math.min(1, this.trauma + 0.05);
   }
@@ -797,30 +926,42 @@ export class Game {
         }
       }
     }
-    if (!this.player.dead && this.player.invuln <= 0) {
+    const ships = this.livingShips();
+    for (const s of ships) {
+      if (s.invuln > 0) continue;
       for (const b of this.bullets) {
         if (!b.alive || b.from !== "enemy") continue;
-        if (Math.hypot(b.x - this.player.x, b.y - this.player.y) < b.r + this.player.r) {
+        if (Math.hypot(b.x - s.x, b.y - s.y) < b.r + s.r) {
           b.alive = false;
-          this.hurtPlayer();
+          this.hurtShip(s);
         }
       }
       for (const e of this.enemies) {
         if (!e.alive) continue;
-        if (Math.hypot(e.x - this.player.x, e.y - this.player.y) < e.r + this.player.r - 4) {
-          this.hurtPlayer();
+        if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + s.r - 4) {
+          this.hurtShip(s);
           this.hurtEnemy(e, true);
         }
       }
     }
     for (const p of this.pickups) {
-      if (!p.alive || this.player.dead) continue;
-      if (Math.hypot(p.x - this.player.x, p.y - this.player.y) < 22) {
-        const kind = p.kind;
-        p.alive = false;
-        this.collect(kind);
+      if (!p.alive) continue;
+      for (const s of ships) {
+        if (Math.hypot(p.x - s.x, p.y - s.y) < 22) {
+          const kind = p.kind;
+          p.alive = false;
+          this.collectFor(s, kind);
+          break;
+        }
       }
     }
+  }
+
+  private livingShips(): Ship[] {
+    const out: Ship[] = [];
+    if (!this.player.dead) out.push(this.player);
+    if (this.mate && !this.mate.dead) out.push(this.mate);
+    return out;
   }
 
   private hurtEnemy(e: Enemy, ram = false, opts?: { dmg?: number; drop?: boolean; sfx?: boolean }): void {
@@ -848,22 +989,22 @@ export class Game {
     }
   }
 
-  private hurtPlayer(): void {
-    if (this.player.dead || this.player.invuln > 0) return;
-    if (this.player.shield > 0) {
-      this.player.shield -= 1;
-      this.player.invuln = 0.6;
+  private hurtShip(s: Ship): void {
+    if (s.dead || s.invuln > 0) return;
+    if (s.shield > 0) {
+      s.shield -= 1;
+      s.invuln = 0.6;
       this.audio.hit();
       this.trauma = Math.min(1, this.trauma + 0.35);
-      this.burstRing(this.player.x, this.player.y, "rgba(110,200,224,0.9)");
+      this.burstRing(s.x, s.y, "rgba(110,200,224,0.9)");
       return;
     }
-    this.player.dead = true;
+    s.dead = true;
     this.player.lives -= 1;
-    this.player.respawn = 1.15;
-    this.player.multi = 1;
-    this.player.speed = 0;
-    this.explode(this.player.x, this.player.y, 1.6);
+    s.respawn = 1.15;
+    s.multi = 1;
+    s.speed = 0;
+    this.explode(s.x, s.y, 1.6);
     this.audio.dead();
     this.trauma = 1;
     if (!this.reduced) this.hitstop = 0.1;
@@ -884,27 +1025,36 @@ export class Game {
   }
 
   private collect(kind: PowerKind): void {
+    this.collectFor(this.player, kind);
+  }
+
+  private collectFor(s: Ship, kind: PowerKind): void {
     this.audio.pickup();
-    this.spawnFloater(this.player.x, this.player.y - 24, kind.toUpperCase());
-    if (kind === "multi") this.player.multi = this.player.multi >= 3 ? 5 : 3;
-    else if (kind === "shield") this.player.shield = Math.min(SHIELD_MAX, this.player.shield + 1);
-    else if (kind === "speed") this.player.speed = Math.min(SPEED_MAX, this.player.speed + 1);
-    else if (kind === "nuke") this.player.nukes = Math.min(NUKE_MAX, this.player.nukes + 1);
+    this.spawnFloater(s.x, s.y - 24, kind.toUpperCase());
+    if (kind === "multi") s.multi = s.multi >= 3 ? 5 : 3;
+    else if (kind === "shield") s.shield = Math.min(SHIELD_MAX, s.shield + 1);
+    else if (kind === "speed") s.speed = Math.min(SPEED_MAX, s.speed + 1);
+    else if (kind === "nuke") s.nukes = Math.min(NUKE_MAX, s.nukes + 1);
     else {
       this.player.lives += 1;
       this.audio.extraLife();
     }
-    this.clampStacks();
+    this.clampShip(s);
     this.score += 50;
   }
 
   private clampStacks(): void {
-    this.player.speed = Math.min(SPEED_MAX, Math.max(0, this.player.speed | 0));
-    this.player.shield = Math.min(SHIELD_MAX, Math.max(0, this.player.shield | 0));
-    this.player.nukes = Math.min(NUKE_MAX, Math.max(0, this.player.nukes | 0));
-    if (this.player.multi >= 5) this.player.multi = 5;
-    else if (this.player.multi >= 3) this.player.multi = 3;
-    else this.player.multi = 1;
+    this.clampShip(this.player);
+    if (this.mate) this.clampShip(this.mate);
+  }
+
+  private clampShip(s: Ship): void {
+    s.speed = Math.min(SPEED_MAX, Math.max(0, s.speed | 0));
+    s.shield = Math.min(SHIELD_MAX, Math.max(0, s.shield | 0));
+    s.nukes = Math.min(NUKE_MAX, Math.max(0, s.nukes | 0));
+    if (s.multi >= 5) s.multi = 5;
+    else if (s.multi >= 3) s.multi = 3;
+    else s.multi = 1;
   }
 
   private explode(x: number, y: number, scale = 1, sfx = true): void {
@@ -932,19 +1082,20 @@ export class Game {
     }
   }
 
-  private tryNuke(): boolean {
+  private tryNukeFrom(s: Ship): boolean {
     if (this.mode !== "playing") return false;
-    if (this.player.dead || this.player.nukes <= 0 || this.player.nukeCd > 0) return false;
-    this.player.nukes -= 1;
-    this.player.nukeCd = 0.42;
+    if (s.dead || s.nukes <= 0 || s.nukeCd > 0) return false;
+    s.nukes -= 1;
+    s.nukeCd = 0.42;
     this.audio.nuke();
     this.trauma = 1;
     this.flash = this.reduced ? 0.28 : 0.85;
     if (!this.reduced) this.hitstop = Math.max(this.hitstop, 0.14);
     this.rumble(320, 1, 0.75);
 
-    const ox = this.player.x;
-    const oy = this.player.y;
+    const ox = s.x;
+    const oy = s.y;
+    this.pendingBoom = { x: ox, y: oy };
     this.spawnShock(ox, oy, 0.42);
     this.spawnShock(ox, oy, 0.62);
     this.spawnShock(ox, oy, 0.88);
@@ -1102,26 +1253,34 @@ export class Game {
 
   private draw(a: Actions, frameDt: number): void {
     const ctx = this.ctx;
-    const { w, h } = this;
-    if (w < 2 || h < 2) return;
+    const { viewW, viewH } = this;
+    if (viewW < 2 || viewH < 2) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = "#07080c";
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, viewW, viewH);
 
     const shake = this.reduced ? 0 : this.trauma * this.trauma;
     const sx = shake ? (Math.random() * 2 - 1) * 10 * shake : 0;
     const sy = shake ? (Math.random() * 2 - 1) * 10 * shake : 0;
     ctx.save();
+    ctx.translate(this.ox, this.oy);
+    ctx.scale(this.scale, this.scale);
+    ctx.beginPath();
+    ctx.rect(0, 0, this.w, this.h);
+    ctx.clip();
     ctx.translate(sx, sy);
 
-    this.drawStars(this.mode === "playing" ? 1 : 0.45, frameDt);
+    this.drawStars(this.mode === "playing" || this.mode === "lobby" ? 1 : 0.45, frameDt);
     this.drawNebula(frameDt);
 
     for (const p of this.pickups) if (p.alive) this.drawPickup(p);
     for (const b of this.bullets) if (b.alive && b.from === "enemy") this.drawBullet(b);
     for (const e of this.enemies) if (e.alive) this.drawEnemy(e);
     for (const b of this.bullets) if (b.alive && b.from === "player") this.drawBullet(b);
-    if (!this.player.dead && (this.mode === "playing" || this.mode === "paused")) this.drawPlayer();
+    if (this.mode === "playing" || this.mode === "paused") {
+      if (this.mate && !this.mate.dead) this.drawShip(this.mate, true);
+      if (!this.player.dead) this.drawShip(this.player, false);
+    }
     for (const m of this.muzzles) if (m.alive) this.drawMuzzle(m);
     for (const b of this.bursts) if (b.alive) this.drawBurst(b);
     for (const s of this.shocks) if (s.alive) this.drawShock(s);
@@ -1135,10 +1294,11 @@ export class Game {
       a.pointerX != null &&
       a.pointerY != null
     ) {
+      const wpt = this.toWorld(a.pointerX, a.pointerY);
       ctx.beginPath();
       ctx.strokeStyle = "rgba(232,234,239,0.18)";
       ctx.lineWidth = 1.5;
-      ctx.arc(a.pointerX, a.pointerY, 22, 0, Math.PI * 2);
+      ctx.arc(wpt.x, wpt.y, 22, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -1146,7 +1306,7 @@ export class Game {
 
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(210,236,245,${Math.min(1, this.flash) * 0.52})`;
-      ctx.fillRect(0, 0, w, h);
+      ctx.fillRect(0, 0, viewW, viewH);
     }
   }
 
@@ -1179,15 +1339,18 @@ export class Game {
     }
   }
 
-  private drawPlayer(): void {
-    const p = this.player;
+  private drawShip(p: Ship, mate: boolean): void {
     const blink = p.invuln > 0 && Math.floor(this.time * 16) % 2 === 0;
     if (blink) return;
     const rot = p.tilt;
     const atlas = this.atlas;
-    if (!drawSprite(this.ctx, atlas?.player ?? null, p.x, p.y, 56, rot)) {
-      this.drawVectorShip(p.x, p.y, rot, "#e8eaef", "#6ec8e0", 18);
+    const ctx = this.ctx;
+    ctx.save();
+    if (mate) ctx.filter = "hue-rotate(160deg) saturate(1.15)";
+    if (!drawSprite(ctx, atlas?.player ?? null, p.x, p.y, 56, rot)) {
+      this.drawVectorShip(p.x, p.y, rot, mate ? "#e8c4a0" : "#e8eaef", mate ? "#e08a60" : "#6ec8e0", 18);
     }
+    ctx.restore();
     if (p.shield > 0) {
       const ctx = this.ctx;
       ctx.save();
@@ -1397,17 +1560,35 @@ export class Game {
     }
   };
 
+  private toWorld(x: number, y: number): { x: number; y: number } {
+    return { x: (x - this.ox) / this.scale, y: (y - this.oy) / this.scale };
+  }
+
   private resize(): void {
     const cssW = Math.max(1, Math.round(this.canvas.clientWidth || window.innerWidth || 390));
     const cssH = Math.max(1, Math.round(this.canvas.clientHeight || window.innerHeight || 844));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const bufW = Math.max(1, Math.floor(cssW * dpr));
     const bufH = Math.max(1, Math.floor(cssH * dpr));
-    if (cssW === this.w && cssH === this.h && dpr === this.dpr && this.canvas.width === bufW) {
+    const scale = Math.min(cssW / WORLD_W, cssH / WORLD_H);
+    const ox = (cssW - WORLD_W * scale) / 2;
+    const oy = (cssH - WORLD_H * scale) / 2;
+    if (
+      cssW === this.viewW &&
+      cssH === this.viewH &&
+      dpr === this.dpr &&
+      this.canvas.width === bufW &&
+      scale === this.scale
+    ) {
       return;
     }
-    this.w = cssW;
-    this.h = cssH;
+    this.viewW = cssW;
+    this.viewH = cssH;
+    this.w = WORLD_W;
+    this.h = WORLD_H;
+    this.scale = scale;
+    this.ox = ox;
+    this.oy = oy;
     this.dpr = dpr;
     this.canvas.width = bufW;
     this.canvas.height = bufH;
@@ -1432,6 +1613,10 @@ export class Game {
       this.save.scores[0]?.score ?? 0,
       this.save.scores[0]?.name ?? "",
       this.pendingHigh ? 1 : 0,
+      this.netRole,
+      this.roomCode ?? "",
+      this.peerPhase,
+      this.peerReady ? 1 : 0,
     ].join("|");
     if (key === this.hudKey) return;
     this.hudKey = key;
@@ -1451,12 +1636,315 @@ export class Game {
       isHigh: this.hud.isHigh,
       scores: this.save.scores,
       muted: this.save.muted,
+      coop: this.netRole !== "solo",
+      netRole: this.netRole,
+      roomCode: this.roomCode,
+      shareUrl: this.roomCode ? `${window.location.origin}/?r=${this.roomCode}` : null,
+      peerPhase: this.peerPhase,
+      peerReady: this.peerReady,
     };
     this.hud = next;
     try {
       this.onHud(next);
     } catch {
       /* overlay unmounted */
+    }
+  }
+
+  private openNet(role: "host" | "guest", code: string): void {
+    this.closeNet();
+    this.netRole = role;
+    this.roomCode = code;
+    this.peerPhase = "connecting";
+    this.peerReady = false;
+    this.connectUntil = performance.now() + CONNECT_MS;
+    this.mate = blankShip();
+    this.selfId = `${role[0]}-${Math.random().toString(36).slice(2, 8)}`;
+    this.mode = "lobby";
+    this.onRoomCode?.(code);
+    const p2p = new P2PRoom({
+      room: p2pRoomId(code),
+      selfId: this.selfId,
+      name: role,
+      onPeersChanged: (peers) => this.onPeers(peers),
+      onMessage: (_from, data) => this.onNet(data),
+      onConnected: () => this.pushHud(),
+    });
+    this.p2p = p2p;
+    void p2p.join();
+    this.pushHud();
+  }
+
+  private joinAsGuest(code: string): void {
+    this.audio.unlock();
+    this.openNet("guest", code);
+  }
+
+  private closeNet(): void {
+    this.p2p?.close();
+    this.p2p = null;
+    this.netRole = "solo";
+    this.roomCode = null;
+    this.peerPhase = "idle";
+    this.peerReady = false;
+    this.mate = null;
+    this.mateIn = null;
+    this.onRoomCode?.(null);
+  }
+
+  private onPeers(peers: PeerInfo[]): void {
+    const others = peers.filter((p) => p.id !== this.selfId);
+    if (others.length > 1) {
+      this.peerPhase = "full";
+      this.peerReady = false;
+      this.pushHud();
+      return;
+    }
+    const p = others[0];
+    if (!p) {
+      if (this.peerReady && this.mode === "playing") {
+        this.peerPhase = "left";
+        if (this.netRole === "guest") {
+          this.mode = "over";
+          this.hud.isHigh = false;
+          this.pendingHigh = null;
+        } else {
+          this.banner = "PARTNER LEFT";
+          this.bannerT = 2;
+        }
+      } else if (this.peerPhase === "connected" || this.peerPhase === "connecting") {
+        this.peerPhase = this.mode === "lobby" ? "waiting" : this.peerPhase;
+        this.peerReady = false;
+      }
+      this.pushHud();
+      return;
+    }
+    if (p.connectionState === "failed") {
+      this.peerPhase = "failed";
+      this.peerReady = false;
+    } else if (p.connectionState === "connected") {
+      this.peerPhase = "connected";
+      this.peerReady = true;
+    } else {
+      this.peerPhase = "connecting";
+      this.peerReady = false;
+    }
+    this.pushHud();
+  }
+
+  private watchLobby(now: number): void {
+    if (this.peerPhase === "connecting" && now > this.connectUntil && !this.peerReady) {
+      this.peerPhase = "failed";
+      this.pushHud();
+    }
+  }
+
+  private pumpNet(now: number): void {
+    if (!this.p2p || this.netRole === "solo") return;
+    if (now - this.lastNet < NET_HZ * 1000) return;
+    this.lastNet = now;
+    if (this.netRole === "host" && this.mode === "playing") {
+      this.p2p.broadcast(this.buildSnap());
+      this.pendingBoom = null;
+    }
+    if (this.netRole === "guest" && (this.mode === "playing" || this.mode === "paused")) {
+      this.p2p.broadcast({ t: "i", x: this.player.x, y: this.player.y });
+    }
+  }
+
+  private buildSnap(): SnapMsg {
+    const pack = (s: Ship): ShipSnap => ({
+      x: s.x,
+      y: s.y,
+      ti: s.tilt,
+      d: s.dead ? 1 : 0,
+      sh: s.shield,
+      mu: s.multi,
+      sp: s.speed,
+      nk: s.nukes,
+      iv: s.invuln,
+    });
+    const host = this.netRole === "host" ? this.player : this.mate ?? this.player;
+    const guest = this.netRole === "guest" ? this.player : this.mate ?? this.player;
+    return {
+      t: "s",
+      sc: this.score,
+      lv: this.player.lives,
+      wv: this.wave,
+      cb: this.combo,
+      bn: this.bannerT > 0 ? this.banner : "",
+      boom: this.pendingBoom ?? undefined,
+      sh: [pack(host), pack(guest)],
+      en: this.enemies
+        .filter((e) => e.alive)
+        .map((e) => ({ k: e.kind, x: e.x, y: e.y, vx: e.vx, hp: e.hp, fl: e.flash })),
+      bu: this.bullets
+        .filter((b) => b.alive)
+        .map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, f: b.from === "player" ? 1 : 0, r: b.r })),
+      pk: this.pickups.filter((p) => p.alive).map((p) => ({ k: p.kind, x: p.x, y: p.y })),
+    };
+  }
+
+  private applySnap(msg: SnapMsg): void {
+    this.score = msg.sc;
+    this.player.lives = msg.lv;
+    this.wave = msg.wv;
+    this.combo = msg.cb;
+    if (msg.bn) {
+      this.banner = msg.bn;
+      this.bannerT = 1.2;
+    }
+    const local = this.netRole === "guest" ? msg.sh[1] : msg.sh[0];
+    const remote = this.netRole === "guest" ? msg.sh[0] : msg.sh[1];
+    this.player.multi = local.mu;
+    this.player.shield = local.sh;
+    this.player.speed = local.sp;
+    this.player.nukes = local.nk;
+    if (!this.mate) this.mate = blankShip();
+    const k = 0.45;
+    this.mate.x += (remote.x - this.mate.x) * k;
+    this.mate.y += (remote.y - this.mate.y) * k;
+    this.mate.tilt = remote.ti;
+    this.mate.dead = !!remote.d;
+    this.mate.shield = remote.sh;
+    this.mate.multi = remote.mu;
+    this.mate.speed = remote.sp;
+    this.mate.nukes = remote.nk;
+    this.mate.invuln = remote.iv;
+
+    this.clearPool(this.enemies);
+    for (const e of msg.en) {
+      const n = this.take(this.enemies, () => ({
+        alive: true,
+        kind: "scout" as EnemyKind,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        r: 12,
+        hp: 1,
+        fire: 0,
+        pattern: "sine" as Pattern,
+        t: 0,
+        phase: 0,
+        score: 100,
+        flash: 0,
+        originX: 0,
+      }));
+      const spec = KIND[(e.k as EnemyKind) in KIND ? (e.k as EnemyKind) : "scout"];
+      n.alive = true;
+      n.kind = (e.k as EnemyKind) in KIND ? (e.k as EnemyKind) : "scout";
+      n.x = e.x;
+      n.y = e.y;
+      n.vx = e.vx;
+      n.r = spec.r;
+      n.hp = e.hp;
+      n.flash = e.fl;
+      n.score = spec.score;
+    }
+    this.clearPool(this.bullets);
+    for (const b of msg.bu) {
+      const n = this.take(this.bullets, () => ({
+        alive: true,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        r: 4,
+        from: "player" as const,
+        life: 1,
+      }));
+      n.alive = true;
+      n.x = b.x;
+      n.y = b.y;
+      n.vx = b.vx;
+      n.vy = b.vy;
+      n.r = b.r;
+      n.from = b.f ? "player" : "enemy";
+      n.life = 1;
+    }
+    this.clearPool(this.pickups);
+    for (const p of msg.pk) {
+      const n = this.take(this.pickups, () => ({ alive: true, kind: "multi" as PowerKind, x: 0, y: 0, t: 0 }));
+      n.alive = true;
+      n.kind = (["multi", "shield", "speed", "life", "nuke"] as PowerKind[]).includes(p.k as PowerKind)
+        ? (p.k as PowerKind)
+        : "multi";
+      n.x = p.x;
+      n.y = p.y;
+    }
+  }
+
+  private clearPool<T extends { alive: boolean }>(list: T[]): void {
+    for (const o of list) o.alive = false;
+  }
+
+  private onNet(data: unknown): void {
+    const msg = asNetMsg(data);
+    if (!msg) return;
+    if (msg.t === "i" && this.netRole === "host") {
+      this.mateIn = msg;
+      return;
+    }
+    if (msg.t === "s" && this.netRole === "guest") {
+      this.applySnap(msg);
+      if (msg.boom) {
+        this.audio.nuke();
+        this.flash = this.reduced ? 0.28 : 0.85;
+        this.spawnShock(msg.boom.x, msg.boom.y, 0.42);
+        this.spawnShock(msg.boom.x, msg.boom.y, 0.62);
+        this.spawnShock(msg.boom.x, msg.boom.y, 0.88);
+      }
+      this.pushHud();
+      return;
+    }
+    if (msg.t === "go") {
+      if (this.netRole === "host" && (this.mode === "lobby" || this.mode === "over")) this.beginRun();
+      if (this.netRole === "guest") this.beginRun();
+      return;
+    }
+    if (msg.t === "p") {
+      if (msg.on) {
+        if (this.mode === "playing") this.mode = "paused";
+      } else if (this.mode === "paused") this.mode = "playing";
+      this.pushHud();
+      return;
+    }
+    if (msg.t === "x" && this.netRole === "guest") {
+      this.mode = "over";
+      this.hud.overScore = msg.sc;
+      this.hud.overWave = msg.wv;
+      this.hud.isHigh = false;
+      this.pendingHigh = null;
+      this.pushHud();
+    }
+  }
+
+  private updateMate(dt: number): void {
+    if (!this.mate || this.netRole !== "host") return;
+    const s = this.mate;
+    s.invuln = Math.max(0, s.invuln - dt);
+    s.fireCd = Math.max(0, s.fireCd - dt);
+    s.nukeCd = Math.max(0, s.nukeCd - dt);
+    if (s.dead) {
+      s.respawn -= dt;
+      if (s.respawn <= 0 && this.player.lives > 0) this.resetShip(s, false, 1);
+      return;
+    }
+    if (this.mateIn) {
+      const k = 18;
+      s.x += (this.mateIn.x - s.x) * (1 - Math.exp(-k * dt));
+      s.y += (this.mateIn.y - s.y) * (1 - Math.exp(-k * dt));
+      if (this.mateIn.n) {
+        this.tryNukeFrom(s);
+        this.mateIn.n = 0;
+      }
+    }
+    s.x = clamp(s.x, 28, this.w - 28);
+    s.y = clamp(s.y, 64, this.h - 36);
+    if (s.fireCd <= 0) {
+      this.fireFrom(s);
+      s.fireCd = s.multi >= 5 ? 0.09 : 0.12;
     }
   }
 
@@ -1478,7 +1966,7 @@ export class Game {
       },
       getSpeedStacks: () => this.player.speed,
       getNukes: () => this.player.nukes,
-      fireNuke: () => this.tryNuke(),
+      fireNuke: () => this.tryNukeFrom(this.player),
       countEnemies: () => this.enemies.reduce((n, e) => n + (e.alive ? 1 : 0), 0),
       countEnemyBullets: () =>
         this.bullets.reduce((n, b) => n + (b.alive && b.from === "enemy" ? 1 : 0), 0),

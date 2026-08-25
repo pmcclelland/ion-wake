@@ -1,4 +1,6 @@
-export type Mode = "title" | "playing" | "paused" | "over" | "scores";
+export type Mode = "title" | "lobby" | "playing" | "paused" | "over" | "scores";
+export type NetRole = "solo" | "host" | "guest";
+export type PeerPhase = "idle" | "waiting" | "connecting" | "connected" | "failed" | "full" | "left";
 
 export type EnemyKind = "scout" | "fighter" | "bomber";
 export type PowerKind = "multi" | "shield" | "speed" | "life" | "nuke";
@@ -27,6 +29,12 @@ export type HudState = {
   isHigh: boolean;
   scores: ScoreRow[];
   muted: boolean;
+  coop: boolean;
+  netRole: NetRole;
+  roomCode: string | null;
+  shareUrl: string | null;
+  peerPhase: PeerPhase;
+  peerReady: boolean;
 };
 
 export const defaultHud = (): HudState => ({
@@ -45,6 +53,12 @@ export const defaultHud = (): HudState => ({
   isHigh: false,
   scores: [],
   muted: false,
+  coop: false,
+  netRole: "solo",
+  roomCode: null,
+  shareUrl: null,
+  peerPhase: "idle",
+  peerReady: false,
 });
 
 export type GameAPI = {
@@ -60,4 +74,7 @@ export type GameAPI = {
   submitName: (name: string) => void;
   unlockAudio: () => void;
   fireNuke: () => void;
+  playTogether: () => void;
+  startCoop: () => void;
+  leaveCoop: () => void;
 };

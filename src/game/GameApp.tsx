@@ -2,10 +2,12 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import {
   Bomb,
   ChevronsUp,
+  Copy,
   Maximize2,
   Minimize2,
   Pause,
   Shield,
+  Users,
   Volume2,
   VolumeX,
   Zap,
@@ -19,10 +21,19 @@ import {
 } from "./fullscreen";
 import { defaultHud, type GameAPI, type HudState } from "./types";
 
-export function GameApp() {
+export function GameApp({
+  joinCode,
+  onRoomCode,
+}: {
+  joinCode?: string;
+  onRoomCode?: (code: string | null) => void;
+}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameAPI | null>(null);
+  const joinRef = useRef(joinCode);
+  const roomCb = useRef(onRoomCode);
+  roomCb.current = onRoomCode;
   const [hud, setHud] = useState<HudState>(defaultHud);
   const [name, setName] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
@@ -35,7 +46,10 @@ export function GameApp() {
     let instance: GameAPI | null = null;
     void import("./engine").then(({ Game }) => {
       if (!alive || !canvas) return;
-      instance = new Game(canvas, setHud);
+      instance = new Game(canvas, setHud, {
+        joinCode: joinRef.current,
+        onRoomCode: (code) => roomCb.current?.(code),
+      });
       gameRef.current = instance;
       instance.start();
     });
@@ -234,6 +248,15 @@ export function GameApp() {
               variant="secondary"
               className="w-full"
               type="button"
+              onClick={() => g()?.playTogether()}
+            >
+              <Users className="size-4" strokeWidth={2} />
+              Play together
+            </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              type="button"
               onClick={() => g()?.showScores()}
             >
               High Scores
@@ -255,6 +278,54 @@ export function GameApp() {
             )}
           </div>
           <ControlsHint canFullscreen={canFullscreen} className="mt-4" />
+        </Panel>
+      )}
+
+      {hud.mode === "lobby" && (
+        <Panel>
+          <p className="font-display text-xs font-medium uppercase tracking-widest text-muted">
+            Co-op
+          </p>
+          <h2 className="font-display text-2xl font-semibold tracking-widest">
+            {hud.netRole === "host" ? "Your room" : "Join room"}
+          </h2>
+          {hud.roomCode && (
+            <p className="font-display text-4xl font-semibold tracking-[0.4em]">{hud.roomCode}</p>
+          )}
+          <p className="max-w-sm text-pretty text-sm text-muted">{lobbyCopy(hud.peerPhase, hud.netRole)}</p>
+          {hud.shareUrl && (
+            <Button
+              variant="secondary"
+              className="w-full max-w-xs"
+              type="button"
+              onClick={() => {
+                const url = hud.shareUrl;
+                if (!url) return;
+                void navigator.clipboard?.writeText(url).catch(() => {
+                  window.prompt("Copy this link", url);
+                });
+              }}
+            >
+              <Copy className="size-4" strokeWidth={2} />
+              Copy link
+            </Button>
+          )}
+          <div className="mt-2 flex w-full max-w-xs flex-col gap-2">
+            {hud.netRole === "host" && (
+              <Button
+                size="lg"
+                className="w-full"
+                type="button"
+                disabled={!hud.peerReady}
+                onClick={() => g()?.startCoop()}
+              >
+                {hud.peerReady ? "Start" : "Waiting for friend"}
+              </Button>
+            )}
+            <Button variant="ghost" className="w-full" type="button" onClick={() => g()?.leaveCoop()}>
+              Cancel
+            </Button>
+          </div>
         </Panel>
       )}
 
@@ -308,7 +379,10 @@ export function GameApp() {
           <p className="font-display text-4xl font-semibold tabular-nums tracking-tight">
             {hud.overScore.toLocaleString()}
           </p>
-          <p className="text-sm text-muted">Wave {hud.overWave}</p>
+          <p className="text-sm text-muted">
+            Wave {hud.overWave}
+            {hud.coop ? " · Co-op" : ""}
+          </p>
           {hud.isHigh && (
             <form
               className="mt-2 flex w-full max-w-xs flex-col gap-2"
@@ -426,6 +500,15 @@ function FullscreenButton({
       )}
     </Button>
   );
+}
+
+function lobbyCopy(phase: HudState["peerPhase"], role: HudState["netRole"]): string {
+  if (phase === "failed") return "Couldn’t connect. Some networks block a direct link — try another connection.";
+  if (phase === "full") return "This room already has two pilots.";
+  if (phase === "left") return "Your partner left.";
+  if (phase === "connected") return role === "host" ? "Friend is in. Start when you’re ready." : "Connected. Waiting for host to start.";
+  if (phase === "connecting") return "Connecting…";
+  return role === "host" ? "Share the link. One friend can join." : "Joining the room…";
 }
 
 const CONTROL_ROWS: ReadonlyArray<{ action: string; binding: string; fullscreenOnly?: boolean }> = [
