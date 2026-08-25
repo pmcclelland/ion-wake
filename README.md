@@ -2,6 +2,8 @@
 
 **Ride the ion storm.**
 
+Play at [ionwake.pmcclel.land](https://ionwake.pmcclel.land).
+
 A top-down arcade shooter. Break the incoming fleet, chain combos, and grab
 multi-shot, shield, speed, and the rare nuke. Three lives. Auto-fire is always
 on.
@@ -17,18 +19,27 @@ on.
 Open the title screen and hit **Play**. The ship fires on its own — your job is
 to stay alive, pick up drops, and ride the combo as waves escalate.
 
-**Play together** opens a private 2-player room. Share the link (`/?r=K7Q2`).
-Same waves and score, shared lives, your own guns and nukes. Co-op runs do not
-write the public high-score board. If a direct connection fails, the lobby says
-so instead of spinning.
-
 - **Scouts** dart in sine and dive patterns
 - **Fighters** seek and return fire
 - **Bombers** hold the line every fifth wave and drop loot often
 - Enemy HP ticks up every four waves
 
-High scores are a shared top-8 board (saved on the server) plus a local cache.
-A top-8 run earns a three-letter tag.
+The arena is a fixed **390×844** playfield, letterboxed on wider screens so a
+phone and a laptop share one field. High scores are a shared top-8 board (saved
+on the server) plus a local cache. A top-8 run earns a three-letter tag.
+
+## Play together
+
+**Play together** opens a private 2-player room. Copy the link (`/?r=K7Q2`) and
+send it to one friend. The host starts the run once they join.
+
+You share waves, score, and lives. Each ship keeps its own guns, shield, speed,
+and nukes — host left of center, guest right. Co-op runs do not write the public
+high-score board.
+
+The two browsers talk peer-to-peer (WebRTC). The server only brokers the
+handshake. Some networks block a direct link; the lobby says so instead of
+spinning. Rooms hold two seats — a third visitor is turned away.
 
 ## Controls
 
@@ -36,12 +47,16 @@ A top-8 run earns a three-letter tag.
 | --- | --- | --- | --- |
 | Move | WASD or arrow keys | Drag / mouse follow | Left stick or D-pad |
 | Fire | Automatic | Automatic | Automatic |
-| Nuke | `X` | Bomb button | B / Circle |
+| Nuke | `X` | Bomb button (larger on phones) | B / Circle |
 | Pause | `Esc` or `P` | Pause button | Start |
 | Fullscreen | `F` | Fullscreen button | — |
 
-Sound mute lives on the pause menu. Touch drag lifts the ship above your finger
-so you can still see it.
+The same list sits on the title and pause overlays. Sound mute lives on pause.
+Touch drag lifts the ship above your finger so you can still see it; speed
+stacks apply to drag the same as they do to WASD.
+
+Fullscreen uses the browser’s native API when it exists (including Chrome on
+Android) and an immersive fill on phones that don’t expose it (iPhone).
 
 ## Scoring
 
@@ -74,6 +89,7 @@ drop. A hit without a shield resets multi and speed; nukes stay with you.
 - [React 19](https://react.dev/) + [TanStack Start](https://tanstack.com/start) / Router
 - [Vite](https://vite.dev/) + [Tailwind CSS v4](https://tailwindcss.com/)
 - Canvas 2D game loop in `src/game/` (fixed 60 Hz step, Web Audio SFX)
+- Co-op over WebRTC data channels; `/api/rtc` is signaling only (host-authoritative sim)
 - No accounts — the public high-score board lives in Postgres (Neon on deploy, local PGLite in dev)
 
 ## Layout
@@ -81,12 +97,16 @@ drop. A hit without a shield resets multi and speed; nukes stay with you.
 ```
 src/
   game/                 Canvas engine, HUD overlays, input, audio, save
-    GameApp.tsx         Title / pause / game-over / scores chrome
-    engine.ts           Waves, combat, FX
+    GameApp.tsx         Title / lobby / pause / game-over / scores chrome
+    engine.ts           Waves, combat, FX, letterboxed world, co-op sim
+    coop.ts             Room codes, snapshot wire types
+    fullscreen.ts       Native fullscreen + immersive phone fill
     input.ts            Keyboard, pointer, standard gamepad
     save.ts             High scores + mute
     sprites.ts          Atlas loader
-  routes/               `/` mounts the game
+  lib/multiplayer/      WebRTC rooms + signaling relay
+  routes/               `/` mounts the game; `/?r=CODE` joins a room
+    api/rtc.ts          Signaling handshake
   styles.css            Dark arcade tokens (Oxanium + Figtree)
 public/sprites/         Runtime ship, enemy, bolt, FX, and pickup art
 assets/sprites/         Source sheets + magenta chroma pipeline
